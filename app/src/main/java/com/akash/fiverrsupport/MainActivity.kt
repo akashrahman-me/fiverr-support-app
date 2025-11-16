@@ -1,9 +1,20 @@
 package com.akash.fiverrsupport
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -30,14 +42,72 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.akash.fiverrsupport.ui.theme.FiverrSupportTheme
 
 class MainActivity : ComponentActivity() {
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (!isGranted) {
+            Toast.makeText(this, "Notification permission is required for the service", Toast.LENGTH_LONG).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Request battery optimization exemption
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                try {
+                    startActivity(intent)
+                    Toast.makeText(
+                        this,
+                        "Please allow battery optimization exemption for better performance",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Could not request battery optimization", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        // Request overlay permission for Android 10+ to launch apps from background
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!Settings.canDrawOverlays(this)) {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(intent)
+                Toast.makeText(
+                    this,
+                    "Please grant overlay permission to launch apps from background",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+        // Request notification permission for Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
         setContent {
             FiverrSupportTheme {
                 Root()
@@ -67,7 +137,24 @@ fun Root(modifier: Modifier = Modifier) {
             )
         }
     ) { innerPadding ->
+        val context = LocalContext.current
         var isEnabled by remember { mutableStateOf(false) }
+
+        // Start or stop the foreground service based on the switch state
+        fun toggleService(enabled: Boolean) {
+            val serviceIntent = Intent(context, FiverrLauncherService::class.java)
+            if (enabled) {
+                serviceIntent.action = FiverrLauncherService.ACTION_START
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
+            } else {
+                serviceIntent.action = FiverrLauncherService.ACTION_STOP
+                context.startService(serviceIntent)
+            }
+        }
 
         Column(
             modifier = Modifier
@@ -75,6 +162,23 @@ fun Root(modifier: Modifier = Modifier) {
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
+            Button(onClick = {
+                try {
+                    val intent = context.packageManager.getLaunchIntentForPackage("com.fiverr.fiverr")
+                    if (intent != null) {
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        context.startActivity(intent)
+                        Toast.makeText(context, "Opening Fiverr app...", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Fiverr app is not installed on this device", Toast.LENGTH_LONG).show()
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Error opening app: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }) {
+                Text(text = "Open Fiverr App")
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -91,7 +195,7 @@ fun Root(modifier: Modifier = Modifier) {
                         contentDescription = "App Status",
                         modifier = Modifier.size(40.dp),
                         tint = if (isEnabled) MaterialTheme.colorScheme.primary
-                               else MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.width(16.dp))
                     Column {
@@ -109,9 +213,13 @@ fun Root(modifier: Modifier = Modifier) {
                 }
                 Switch(
                     checked = isEnabled,
-                    onCheckedChange = { isEnabled = it }
+                    onCheckedChange = {
+                        isEnabled = it
+                        toggleService(it)
+                    }
                 )
             }
         }
     }
 }
+
