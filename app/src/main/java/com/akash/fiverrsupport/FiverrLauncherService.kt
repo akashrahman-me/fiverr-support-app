@@ -250,6 +250,7 @@ class FiverrLauncherService : Service() {
     private val launchRunnable = object : Runnable {
         override fun run() {
             if (isRunning && !isPaused) {
+                Log.d("nvm", "⏰ Timer reached 0 - Executing action NOW")
                 handleFiverrAction()
                 nextLaunchTime = System.currentTimeMillis() + launchInterval
 
@@ -578,18 +579,23 @@ class FiverrLauncherService : Service() {
     private fun handleFiverrAction() {
         val fiverrPackage = "com.fiverr.fiverr"
 
-        // Check if Fiverr app is currently in foreground
+        Log.d("nvm", "========================================")
+        Log.d("nvm", "Countdown reached 0 - Making decision NOW")
+        Log.d("nvm", "Current timestamp: ${System.currentTimeMillis()}")
+
+        // Check if Fiverr app is currently in foreground RIGHT NOW
         val isFiverrInFront = isAppInForeground(this, fiverrPackage)
 
         if (isFiverrInFront) {
             // Fiverr is already in front, perform scroll gesture
-            Log.d("nvm", "Fiverr app is in foreground - performing pull-down gesture")
+            Log.d("nvm", "✅ DECISION: Fiverr IS in foreground → Performing pull-down gesture")
             performScrollGesture()
         } else {
             // Fiverr is not in front, launch it
-            Log.d("nvm", "Fiverr app is NOT in foreground - launching app")
+            Log.d("nvm", "✅ DECISION: Fiverr NOT in foreground → Launching app")
             launchFiverrApp()
         }
+        Log.d("nvm", "========================================")
     }
 
     /**
