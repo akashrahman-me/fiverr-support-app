@@ -10,7 +10,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.PowerManager
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -20,7 +19,6 @@ class FiverrLauncherService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var isRunning = false
     private val launchInterval = 5000L
-    private var wakeLock: PowerManager.WakeLock? = null
 
     private val launchRunnable = object : Runnable {
         override fun run() {
@@ -33,66 +31,53 @@ class FiverrLauncherService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d("nvm", "FiverrLauncherService created")
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                startForegroundService()
+                startForegroundServiceInternal()
                 isRunning = true
                 handler.post(launchRunnable)
-            }
 
+                Log.d("nvm", "FiverrLauncherService started")
+
+                // Start the KeepScreenOnService to maintain screen awake with overlay
+                try {
+                    val keepScreenIntent = Intent(this, KeepScreenOnService::class.java)
+                    startService(keepScreenIntent)
+                    Log.d("nvm", "KeepScreenOnService started successfully")
+                } catch (e: Exception) {
+                    Log.e("nvm", "Failed to start KeepScreenOnService: ${e.message}", e)
+                }
+            }
             ACTION_STOP -> {
-                stopForegroundService()
+                isRunning = false
+                handler.removeCallbacks(launchRunnable)
+                stopForegroundServiceInternal()
+
+                Log.d("nvm", "FiverrLauncherService stopped")
+
+                // Stop the KeepScreenOnService
+                try {
+                    val keepScreenIntent = Intent(this, KeepScreenOnService::class.java)
+                    stopService(keepScreenIntent)
+                    Log.d("nvm", "KeepScreenOnService stopped")
+                } catch (e: Exception) {
+                    Log.e("nvm", "Failed to stop KeepScreenOnService: ${e.message}", e)
+                }
             }
         }
         return START_STICKY
     }
 
-    @Suppress("DEPRECATION")
-    private fun startForegroundService() {
-        // Acquire wake lock to keep screen on
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-
-        // Use SCREEN_BRIGHT_WAKE_LOCK to keep screen on at full brightness
-        // Combined with ACQUIRE_CAUSES_WAKEUP to turn on screen if off
-        // Combined with ON_AFTER_RELEASE to keep screen on briefly after release
-        wakeLock = powerManager.newWakeLock(
-            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
-            PowerManager.ACQUIRE_CAUSES_WAKEUP or
-            PowerManager.ON_AFTER_RELEASE,
-            "FiverrSupport::ScreenWakeLock"
-        )
-
-        // Set reference counted to false so multiple acquire calls don't require multiple releases
-        wakeLock?.setReferenceCounted(false)
-
-        // Acquire without timeout for indefinite screen on
-        // Note: This will keep screen on until explicitly released
-        wakeLock?.acquire()
-
-        val notification = createNotification()
-        startForeground(NOTIFICATION_ID, notification)
-        Toast.makeText(this, "Fiverr Support Service Started - Screen will stay on", Toast.LENGTH_SHORT).show()
-        Log.d("nvm", "WakeLock acquired - screen will stay on indefinitely")
+    private fun startForegroundServiceInternal() {
+        startForeground(NOTIFICATION_ID, createNotification())
+        Toast.makeText(this, "Fiverr Support Service Started", Toast.LENGTH_SHORT).show()
     }
 
-    private fun stopForegroundService() {
-        isRunning = false
-        handler.removeCallbacks(launchRunnable)
-
-        // Release wake lock to allow screen to turn off
-        wakeLock?.let {
-            if (it.isHeld) {
-                it.release()
-                Log.d("nvm", "WakeLock released - screen can turn off now")
-            }
-        }
-        wakeLock = null
-
+    private fun stopForegroundServiceInternal() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         Toast.makeText(this, "Fiverr Support Service Stopped", Toast.LENGTH_SHORT).show()
@@ -107,7 +92,7 @@ class FiverrLauncherService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Fiverr Support")
-            .setContentText("Service is running - Screen will stay on")
+            .setContentText("Service running - keeping screen awake & opening Fiverr")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -134,33 +119,15 @@ class FiverrLauncherService : Service() {
             if (intent != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                 startActivity(intent)
-                Log.d("nvm", "Fiverr app launched successfully")
             } else {
                 Log.w("nvm", "Fiverr app package not found")
             }
         } catch (e: Exception) {
             Log.e("nvm", "Error launching Fiverr app: ${e.message}")
-            // Silently fail, service continues running
         }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onDestroy() {
-        super.onDestroy()
-        isRunning = false
-        handler.removeCallbacks(launchRunnable)
-
-        // Release wake lock if still held
-        wakeLock?.let {
-            if (it.isHeld) {
-                it.release()
-            }
-        }
-        wakeLock = null
-
-        Log.d("nvm", "FiverrLauncherService destroyed")
-    }
 
     companion object {
         const val CHANNEL_ID = "FiverrSupportChannel"
@@ -169,4 +136,3 @@ class FiverrLauncherService : Service() {
         const val ACTION_STOP = "ACTION_STOP"
     }
 }
-

@@ -1,6 +1,8 @@
 package com.akash.fiverrsupport
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -9,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.TextUtils
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -46,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.akash.fiverrsupport.ui.theme.FiverrSupportTheme
+import androidx.core.net.toUri
 
 class MainActivity : ComponentActivity() {
 
@@ -57,44 +61,41 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @SuppressLint("BatteryLife")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
         // Request battery optimization exemption
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                try {
-                    startActivity(intent)
-                    Toast.makeText(
-                        this,
-                        "Please allow battery optimization exemption for better performance",
-                        Toast.LENGTH_LONG
-                    ).show()
-                } catch (e: Exception) {
-                    Toast.makeText(this, "Could not request battery optimization", Toast.LENGTH_SHORT).show()
-                }
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = "package:$packageName".toUri()
+            }
+            try {
+                startActivity(intent)
+                Toast.makeText(
+                    this,
+                    "Please allow battery optimization exemption for better performance",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(this, "Could not request battery optimization", Toast.LENGTH_SHORT).show()
             }
         }
 
         // Request overlay permission for Android 10+ to launch apps from background
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!Settings.canDrawOverlays(this)) {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-                startActivity(intent)
-                Toast.makeText(
-                    this,
-                    "Please grant overlay permission to launch apps from background",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
+        if (!Settings.canDrawOverlays(this)) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                "package:$packageName".toUri()
+            )
+            startActivity(intent)
+            Toast.makeText(
+                this,
+                "Please grant overlay permission to launch apps from background",
+                Toast.LENGTH_LONG
+            ).show()
         }
 
         // Request notification permission for Android 13+
@@ -108,11 +109,40 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Check if accessibility service is enabled
+        if (!isAccessibilityServiceEnabled(this)) {
+            Toast.makeText(
+                this,
+                "Please enable Accessibility Service for automation features",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+
         setContent {
             FiverrSupportTheme {
                 Root()
             }
         }
+    }
+
+    private fun isAccessibilityServiceEnabled(context: Context): Boolean {
+        val expectedComponentName = ComponentName(context, FiverrAccessibilityService::class.java)
+        val enabledServicesSetting = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+
+        val colonSplitter = TextUtils.SimpleStringSplitter(':')
+        colonSplitter.setString(enabledServicesSetting)
+
+        while (colonSplitter.hasNext()) {
+            val componentNameString = colonSplitter.next()
+            val enabledService = ComponentName.unflattenFromString(componentNameString)
+            if (enabledService != null && enabledService == expectedComponentName) {
+                return true
+            }
+        }
+        return false
     }
 }
 
@@ -143,15 +173,11 @@ fun Root(modifier: Modifier = Modifier) {
         // Start or stop the foreground service based on the switch state
         fun toggleService(enabled: Boolean) {
             val serviceIntent = Intent(context, FiverrLauncherService::class.java)
-            if (enabled) {
-                serviceIntent.action = FiverrLauncherService.ACTION_START
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(serviceIntent)
-                } else {
-                    context.startService(serviceIntent)
-                }
+            serviceIntent.action = if (enabled) FiverrLauncherService.ACTION_START else FiverrLauncherService.ACTION_STOP
+
+            if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
             } else {
-                serviceIntent.action = FiverrLauncherService.ACTION_STOP
                 context.startService(serviceIntent)
             }
         }
@@ -162,6 +188,7 @@ fun Root(modifier: Modifier = Modifier) {
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
+            // Test Fiverr app button
             Button(onClick = {
                 try {
                     val intent = context.packageManager.getLaunchIntentForPackage("com.fiverr.fiverr")
@@ -179,6 +206,20 @@ fun Root(modifier: Modifier = Modifier) {
                 Text(text = "Open Fiverr App")
             }
 
+            Spacer(modifier = Modifier.padding(8.dp))
+
+            // Accessibility settings button
+            Button(onClick = {
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                context.startActivity(intent)
+                Toast.makeText(context, "Enable 'Fiverr Support' in Accessibility", Toast.LENGTH_LONG).show()
+            }) {
+                Text(text = "Open Accessibility Settings")
+            }
+
+            Spacer(modifier = Modifier.padding(8.dp))
+
+            // Service toggle
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -222,4 +263,3 @@ fun Root(modifier: Modifier = Modifier) {
         }
     }
 }
-
