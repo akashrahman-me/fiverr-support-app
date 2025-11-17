@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -40,6 +41,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -229,6 +231,12 @@ fun Root(modifier: Modifier = Modifier) {
             onDispose {
                 lifecycleOwner.lifecycle.removeObserver(observer)
             }
+        }
+
+        // Force check service state when composable first loads
+        LaunchedEffect(Unit) {
+            isEnabled = isServiceRunning(context, FiverrLauncherService::class.java)
+            Log.d("nvm", "Initial service check: isEnabled = $isEnabled")
         }
 
         // Start or stop the foreground service based on the switch state

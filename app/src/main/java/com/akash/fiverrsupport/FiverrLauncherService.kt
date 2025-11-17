@@ -1,10 +1,15 @@
 package com.akash.fiverrsupport
 
+import android.annotation.SuppressLint
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.job.JobInfo
+import android.app.job.JobScheduler
+import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
@@ -52,10 +57,42 @@ class FiverrLauncherService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        // Handle null intent when service is restarted by Android after being killed
+        if (intent == null) {
+            Log.d("nvm", "Service restarted by Android (null intent) - restoring from SharedPreferences")
+            val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+            val wasEnabled = prefs.getBoolean("service_enabled", false)
+            val savedInterval = prefs.getLong("service_interval", 20000L)
+
+            if (wasEnabled) {
+                Log.d("nvm", "Restoring service with interval: ${savedInterval}ms")
+                launchInterval = savedInterval
+                startForegroundServiceInternal()
+                isRunning = true
+                handler.post(launchRunnable)
+                createOverlay()
+                acquireWakeLock()
+                Log.d("nvm", "Service restored successfully")
+            } else {
+                Log.d("nvm", "Service was disabled by user, not restoring")
+                stopSelf()
+            }
+            return START_STICKY
+        }
+
+        when (intent.action) {
             ACTION_START -> {
                 // Get interval from intent, default to 20 seconds
                 launchInterval = intent.getLongExtra(EXTRA_INTERVAL, 20000L)
+
+                // Save service state as enabled - use commit() for immediate write
+                val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+                prefs.edit()
+                    .putBoolean("service_enabled", true)
+                    .putLong("service_interval", launchInterval)
+                    .commit() // Use commit() instead of apply() for immediate write
+
+                Log.d("nvm", "Saved state: service_enabled=true, interval=${launchInterval}ms")
 
                 startForegroundServiceInternal()
                 isRunning = true
@@ -71,6 +108,14 @@ class FiverrLauncherService : Service() {
                 isRunning = false
                 handler.removeCallbacks(launchRunnable)
 
+                // Save service state as disabled - use commit() for immediate write
+                val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+                prefs.edit()
+                    .putBoolean("service_enabled", false)
+                    .commit() // Use commit() instead of apply()
+
+                Log.d("nvm", "Saved state: service_enabled=false")
+
                 // Remove overlay and release wake lock
                 removeOverlay()
                 releaseWakeLock()
@@ -81,6 +126,13 @@ class FiverrLauncherService : Service() {
             ACTION_UPDATE_INTERVAL -> {
                 // Update interval without restarting service
                 launchInterval = intent.getLongExtra(EXTRA_INTERVAL, 20000L)
+
+                // Save updated interval - use commit() for immediate write
+                val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+                prefs.edit()
+                    .putLong("service_interval", launchInterval)
+                    .commit()
+
                 Log.d("nvm", "Interval updated to: ${launchInterval}ms")
                 // Cancel current scheduled task and reschedule with new interval
                 handler.removeCallbacks(launchRunnable)
@@ -230,12 +282,73 @@ class FiverrLauncherService : Service() {
         Log.d("nvm", "App removed from recents, but service continues running")
     }
 
+    @SuppressLint("ScheduleExactAlarm")
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
         handler.removeCallbacks(launchRunnable)
         removeOverlay()
         releaseWakeLock()
+
+        // Check if service was enabled by user
+        val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+        val wasEnabled = prefs.getBoolean("service_enabled", false)
+
+        if (wasEnabled) {
+            Log.d("nvm", "Service destroyed but was enabled - scheduling restart")
+
+            // Method 1: Use AlarmManager for reliable restart on Android 13+
+            try {
+                val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+                val restartIntent = Intent(this, ServiceRestartReceiver::class.java).apply {
+                    action = "com.akash.fiverrsupport.ACTION_RESTART_SERVICE"
+                    putExtra("interval", prefs.getLong("service_interval", 20000L))
+                }
+
+                val pendingIntent = PendingIntent.getBroadcast(
+                    this,
+                    0,
+                    restartIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                // Schedule restart after 2 seconds
+                val triggerTime = System.currentTimeMillis() + 2000
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerTime,
+                    pendingIntent
+                )
+
+                Log.d("nvm", "Restart scheduled via AlarmManager")
+            } catch (e: Exception) {
+                Log.e("nvm", "Failed to schedule AlarmManager: ${e.message}")
+            }
+
+            // Method 2: Use JobScheduler as backup (more reliable for process kills)
+            try {
+                val jobScheduler = getSystemService(JOB_SCHEDULER_SERVICE) as JobScheduler
+                val componentName = ComponentName(
+                    this.packageName,
+                    "com.akash.fiverrsupport.ServiceRestartJobService"
+                )
+                val jobInfo = JobInfo.Builder(JOB_ID, componentName)
+                    .setMinimumLatency(2000) // Wait 2 seconds
+                    .setOverrideDeadline(5000) // Must run within 5 seconds
+                    .setPersisted(true) // Survive reboots
+                    .build()
+
+                val result = jobScheduler.schedule(jobInfo)
+                if (result == JobScheduler.RESULT_SUCCESS) {
+                    Log.d("nvm", "Restart scheduled via JobScheduler (backup)")
+                } else {
+                    Log.e("nvm", "Failed to schedule JobScheduler")
+                }
+            } catch (e: Exception) {
+                Log.e("nvm", "Failed to schedule JobScheduler: ${e.message}")
+            }
+        }
+
         Log.d("nvm", "FiverrLauncherService destroyed")
     }
 
@@ -246,6 +359,7 @@ class FiverrLauncherService : Service() {
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_UPDATE_INTERVAL = "ACTION_UPDATE_INTERVAL"
         const val EXTRA_INTERVAL = "EXTRA_INTERVAL"
+        const val JOB_ID = 1001
     }
 }
 
