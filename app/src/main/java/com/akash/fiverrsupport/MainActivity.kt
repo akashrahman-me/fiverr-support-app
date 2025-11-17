@@ -50,7 +50,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -58,6 +57,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.akash.fiverrsupport.ui.theme.FiverrSupportTheme
 import androidx.core.net.toUri
 import com.akash.fiverrsupport.ui.components.PermissionToggleItem
+import androidx.core.content.edit
 
 fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
     val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -118,18 +118,16 @@ class MainActivity : ComponentActivity() {
         }
 
         // Request WRITE_SETTINGS permission for brightness control
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!Settings.System.canWrite(this)) {
-                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
-                    data = "package:$packageName".toUri()
-                }
-                startActivity(intent)
-                Toast.makeText(
-                    this,
-                    "Please grant permission to modify system settings for brightness control",
-                    Toast.LENGTH_LONG
-                ).show()
+        if (!Settings.System.canWrite(this)) {
+            val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                data = "package:$packageName".toUri()
             }
+            startActivity(intent)
+            Toast.makeText(
+                this,
+                "Please grant permission to modify system settings for brightness control",
+                Toast.LENGTH_LONG
+            ).show()
         }
 
         // Request notification permission for Android 13+
@@ -152,6 +150,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@SuppressLint("BatteryLife")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Root(modifier: Modifier = Modifier) {
@@ -174,7 +173,7 @@ fun Root(modifier: Modifier = Modifier) {
         }
     ) { innerPadding ->
         val context = LocalContext.current
-        val lifecycleOwner = LocalLifecycleOwner.current
+        val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
         // Load saved interval from SharedPreferences
         val sharedPrefs = context.getSharedPreferences("FiverrSupportPrefs", Context.MODE_PRIVATE)
@@ -208,12 +207,15 @@ fun Root(modifier: Modifier = Modifier) {
             )
         }
         var isWriteSettingsEnabled by remember {
+            mutableStateOf(Settings.System.canWrite(context)
+            )
+        }
+        var isPhoneStatePermissionEnabled by remember {
             mutableStateOf(
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    Settings.System.canWrite(context)
-                } else {
-                    true
-                }
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.READ_PHONE_STATE
+                ) == PackageManager.PERMISSION_GRANTED
             )
         }
 
@@ -237,11 +239,13 @@ fun Root(modifier: Modifier = Modifier) {
                         (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
                             .isIgnoringBatteryOptimizations(context.packageName)
 
-                    isWriteSettingsEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    isWriteSettingsEnabled =
                         Settings.System.canWrite(context)
-                    } else {
-                        true
-                    }
+
+                    isPhoneStatePermissionEnabled = ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.READ_PHONE_STATE
+                    ) == PackageManager.PERMISSION_GRANTED
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
@@ -276,7 +280,7 @@ fun Root(modifier: Modifier = Modifier) {
         // Update interval while service is running
         fun updateInterval(intervalSeconds: Float) {
             // Save to SharedPreferences
-            sharedPrefs.edit().putFloat("launch_interval", intervalSeconds).apply()
+            sharedPrefs.edit { putFloat("launch_interval", intervalSeconds) }
 
             if (isEnabled) {
                 val serviceIntent = Intent(context, FiverrLauncherService::class.java)
@@ -388,17 +392,37 @@ fun Root(modifier: Modifier = Modifier) {
                 enabledText = "Permission granted",
                 disabledText = "Required for brightness control",
                 onToggle = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
-                            data = "package:${context.packageName}".toUri()
-                        }
-                        context.startActivity(intent)
-                        Toast.makeText(
-                            context,
-                            "Please grant permission to modify system settings",
-                            Toast.LENGTH_LONG
-                        ).show()
+                    val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                        data = "package:${context.packageName}".toUri()
                     }
+                    context.startActivity(intent)
+                    Toast.makeText(
+                        context,
+                        "Please grant permission to modify system settings",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            )
+
+            Spacer(modifier = Modifier.padding(4.dp))
+
+            // Phone State Permission toggle
+            PermissionToggleItem(
+                icon = Icons.Default.Settings, // You can use a different icon if you want
+                title = "Phone State Permission",
+                isEnabled = isPhoneStatePermissionEnabled,
+                enabledText = "Permission granted",
+                disabledText = "Required for call detection",
+                onToggle = {
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = "package:${context.packageName}".toUri()
+                    }
+                    context.startActivity(intent)
+                    Toast.makeText(
+                        context,
+                        "Please grant Phone permission in app settings",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             )
 

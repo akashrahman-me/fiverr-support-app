@@ -1,5 +1,6 @@
 package com.akash.fiverrsupport
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.Notification
@@ -12,11 +13,13 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RectF
+import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -26,6 +29,10 @@ import android.os.VibrationEffect
 import android.os.VibrationAttributes
 import android.os.Vibrator
 import android.provider.Settings
+import android.telecom.TelecomManager
+import android.telephony.PhoneStateListener
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
@@ -56,6 +63,15 @@ class FiverrLauncherService : Service() {
 
     private var nextLaunchTime = 0L
 
+    // Media playback detection
+    private var audioManager: AudioManager? = null
+
+    // Call detection
+    private var telephonyManager: TelephonyManager? = null
+    private var telecomManager: TelecomManager? = null
+    private var callStateListener: Any? = null // Can be PhoneStateListener or TelephonyCallback
+    private var isInCall = false
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -67,6 +83,16 @@ class FiverrLauncherService : Service() {
             @Suppress("DEPRECATION")
             getSystemService(VIBRATOR_SERVICE) as Vibrator
         }
+
+        // Initialize AudioManager for media playback detection
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+
+        // Initialize TelephonyManager and TelecomManager for call detection
+        telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
+        telecomManager = getSystemService(TELECOM_SERVICE) as TelecomManager
+
+        // Register call state listener
+        registerCallStateListener()
 
         // Register screen state receiver
         val filter = IntentFilter().apply {
@@ -118,17 +144,41 @@ class FiverrLauncherService : Service() {
                     // If so, respect the 1-minute idle timeout instead of instant resume
                     if (isPaused && isRunning && lastUserInteractionTime > 0) {
                         val idleTime = System.currentTimeMillis() - lastUserInteractionTime
+                        val mediaPlaying = isMediaPlaying()
+                        val inCall = isInCall()
+
                         if (idleTime >= idleTimeout) {
-                            Log.d("nvm", "Auto-resuming service after unlock (idle timeout met: ${idleTime}ms)")
-                            resumeService()
+                            if (mediaPlaying) {
+                                Log.d("nvm", "Idle timeout met but media is playing - NOT resuming")
+                            } else if (inCall) {
+                                Log.d("nvm", "Idle timeout met but in a call - NOT resuming")
+                            } else {
+                                Log.d("nvm", "Auto-resuming service after unlock (idle timeout met: ${idleTime}ms)")
+                                resumeService()
+                            }
                         } else {
                             Log.d("nvm", "Not resuming yet - only ${idleTime}ms idle, need ${idleTimeout}ms (${idleTimeout - idleTime}ms remaining)")
                             // Don't resume - let idle checker continue
                         }
                     } else if (isPaused && isRunning && lastUserInteractionTime == 0L) {
                         // Service was paused by screen lock (not touch), so resume instantly
-                        Log.d("nvm", "Auto-resuming service instantly after unlock (paused by screen lock)")
-                        resumeService()
+                        // But still check for media playback and calls
+                        val mediaPlaying = isMediaPlaying()
+                        val inCall = isInCall()
+                        if (mediaPlaying) {
+                            Log.d("nvm", "Screen unlocked but media is playing - NOT resuming, starting idle checker")
+                            // Start idle checker to wait for media to stop
+                            lastUserInteractionTime = System.currentTimeMillis()
+                            handler.post(idleCheckerRunnable)
+                        } else if (inCall) {
+                            Log.d("nvm", "Screen unlocked but in a call - NOT resuming, starting idle checker")
+                            // Start idle checker to wait for call to end
+                            lastUserInteractionTime = System.currentTimeMillis()
+                            handler.post(idleCheckerRunnable)
+                        } else {
+                            Log.d("nvm", "Auto-resuming service instantly after unlock (paused by screen lock)")
+                            resumeService()
+                        }
                     } else {
                         Log.d("nvm", "Resume not needed (isPaused=$isPaused, isRunning=$isRunning)")
                     }
@@ -151,16 +201,37 @@ class FiverrLauncherService : Service() {
                             // Check if user was paused by touch interaction
                             if (isPaused && isRunning && lastUserInteractionTime > 0) {
                                 val idleTime = System.currentTimeMillis() - lastUserInteractionTime
+                                val mediaPlaying = isMediaPlaying()
+                                val inCall = isInCall()
+
                                 if (idleTime >= idleTimeout) {
-                                    Log.d("nvm", "Auto-resuming service after unlock (via SCREEN_ON, idle timeout met: ${idleTime}ms)")
-                                    resumeService()
+                                    if (mediaPlaying) {
+                                        Log.d("nvm", "Idle timeout met but media is playing (via SCREEN_ON) - NOT resuming")
+                                    } else if (inCall) {
+                                        Log.d("nvm", "Idle timeout met but in a call (via SCREEN_ON) - NOT resuming")
+                                    } else {
+                                        Log.d("nvm", "Auto-resuming service after unlock (via SCREEN_ON, idle timeout met: ${idleTime}ms)")
+                                        resumeService()
+                                    }
                                 } else {
                                     Log.d("nvm", "Not resuming yet (via SCREEN_ON) - only ${idleTime}ms idle, need ${idleTimeout}ms")
                                 }
                             } else if (isPaused && isRunning && lastUserInteractionTime == 0L) {
-                                // Service was paused by screen lock (not touch), so resume instantly
-                                Log.d("nvm", "Auto-resuming service instantly after unlock (via SCREEN_ON, paused by screen lock)")
-                                resumeService()
+                                // Service was paused by screen lock (not touch), check media and calls
+                                val mediaPlaying = isMediaPlaying()
+                                val inCall = isInCall()
+                                if (mediaPlaying) {
+                                    Log.d("nvm", "Screen unlocked (via SCREEN_ON) but media is playing - NOT resuming, starting idle checker")
+                                    lastUserInteractionTime = System.currentTimeMillis()
+                                    handler.post(idleCheckerRunnable)
+                                } else if (inCall) {
+                                    Log.d("nvm", "Screen unlocked (via SCREEN_ON) but in a call - NOT resuming, starting idle checker")
+                                    lastUserInteractionTime = System.currentTimeMillis()
+                                    handler.post(idleCheckerRunnable)
+                                } else {
+                                    Log.d("nvm", "Auto-resuming service instantly after unlock (via SCREEN_ON, paused by screen lock)")
+                                    resumeService()
+                                }
                             }
                         } else if (isLocked) {
                             // Screen on but still locked (wake lock keeping it on for vibration)
@@ -184,14 +255,25 @@ class FiverrLauncherService : Service() {
         }
     }
 
-    // Check if user has been idle for 1 minute, then auto-resume
+    // Check if user has been idle for 1 minute, then auto-resume (unless media is playing)
     private val idleCheckerRunnable = object : Runnable {
         override fun run() {
             if (isRunning && isPaused) {
                 val idleTime = System.currentTimeMillis() - lastUserInteractionTime
+
+                // Check if media is playing or user is in a call
+                val mediaPlaying = isMediaPlaying()
+                val inCall = isInCall()
+
                 if (idleTime >= idleTimeout) {
-                    Log.d("nvm", "User idle for 1 minute - auto-resuming service")
-                    resumeService()
+                    if (mediaPlaying) {
+                        Log.d("nvm", "User idle for 1 minute but media is playing - NOT resuming")
+                    } else if (inCall) {
+                        Log.d("nvm", "User idle for 1 minute but in a call - NOT resuming")
+                    } else {
+                        Log.d("nvm", "User idle for 1 minute, no media playing, no call - auto-resuming service")
+                        resumeService()
+                    }
                 }
             }
             if (isRunning) {
@@ -500,6 +582,137 @@ class FiverrLauncherService : Service() {
         reduceBrightness()
 
         Log.d("nvm", "Service resumed")
+    }
+
+    // Check if any media is currently playing (music, video, etc.)
+    private fun isMediaPlaying(): Boolean {
+        return try {
+            audioManager?.isMusicActive == true
+        } catch (e: Exception) {
+            Log.e("nvm", "Error checking media playback: ${e.message}")
+            false
+        }
+    }
+
+    // Register call state listener (handles both regular calls and VoIP)
+    @SuppressLint("MissingPermission")
+    private fun registerCallStateListener() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // Android 12+ (API 31+): Use TelephonyCallback
+                val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                    override fun onCallStateChanged(state: Int) {
+                        handleCallStateChange(state)
+                    }
+                }
+                telephonyManager?.registerTelephonyCallback(mainExecutor, callback)
+                callStateListener = callback
+                Log.d("nvm", "Registered TelephonyCallback for call detection (Android 12+)")
+            } else {
+                // Android 11 and below: Use PhoneStateListener
+                @Suppress("DEPRECATION")
+                val listener = object : PhoneStateListener() {
+                    override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                        handleCallStateChange(state)
+                    }
+                }
+                @Suppress("DEPRECATION")
+                telephonyManager?.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
+                callStateListener = listener
+                Log.d("nvm", "Registered PhoneStateListener for call detection (Android 11-)")
+            }
+        } catch (e: Exception) {
+            Log.e("nvm", "Failed to register call state listener: ${e.message}", e)
+        }
+    }
+
+    // Unregister call state listener
+    @SuppressLint("MissingPermission")
+    private fun unregisterCallStateListener() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                callStateListener?.let {
+                    telephonyManager?.unregisterTelephonyCallback(it as TelephonyCallback)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                callStateListener?.let {
+                    telephonyManager?.listen(it as PhoneStateListener, PhoneStateListener.LISTEN_NONE)
+                }
+            }
+            Log.d("nvm", "Unregistered call state listener")
+        } catch (e: Exception) {
+            Log.e("nvm", "Error unregistering call state listener: ${e.message}")
+        }
+    }
+
+    // Handle call state changes
+    private fun handleCallStateChange(state: Int) {
+        when (state) {
+            TelephonyManager.CALL_STATE_IDLE -> {
+                // No call active
+                if (isInCall) {
+                    Log.d("nvm", "Call ended - isInCall = false")
+                    isInCall = false
+                    // Don't auto-resume here - let idle checker handle it
+                }
+            }
+            TelephonyManager.CALL_STATE_RINGING, TelephonyManager.CALL_STATE_OFFHOOK -> {
+                // Incoming call or call in progress
+                if (!isInCall) {
+                    Log.d("nvm", "Call started (state=$state) - pausing service")
+                    isInCall = true
+
+                    // Pause service if not already paused
+                    if (!isPaused && isRunning) {
+                        lastUserInteractionTime = System.currentTimeMillis()
+                        pauseService()
+                    }
+                }
+            }
+        }
+    }
+
+    // Check if user is currently in a call (regular phone call or VoIP call)
+    private fun isInCall(): Boolean {
+        // Method 1: Check telephony call state
+        val telephonyCallActive = try {
+            telephonyManager?.callState != TelephonyManager.CALL_STATE_IDLE
+        } catch (e: Exception) {
+            false
+        }
+
+        // Method 2: Check TelecomManager for VoIP calls (WhatsApp, Messenger, etc.)
+        val voipCallActive = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                // Check if we have READ_PHONE_STATE permission
+                if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
+                    telecomManager?.isInCall == true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
+
+        // Method 3: Check AudioManager mode (works for most VoIP apps)
+        val audioModeInCall = try {
+            val mode = audioManager?.mode
+            mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
+        } catch (e: Exception) {
+            false
+        }
+
+        val inCall = telephonyCallActive || voipCallActive || audioModeInCall
+
+        if (inCall && !isInCall) {
+            Log.d("nvm", "Call detected: telephony=$telephonyCallActive, voip=$voipCallActive, audioMode=$audioModeInCall")
+        }
+
+        return inCall
     }
 
     // Save current brightness and reduce to 0
