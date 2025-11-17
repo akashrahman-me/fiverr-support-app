@@ -70,6 +70,7 @@ class FiverrLauncherService : Service() {
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_USER_PRESENT) // Fires when user unlocks device
         }
         registerReceiver(screenStateReceiver, filter)
 
@@ -89,26 +90,34 @@ class FiverrLauncherService : Service() {
                     Log.d("nvm", "Screen turned OFF - starting vibration alert")
                     startVibrationAlert()
                 }
-                Intent.ACTION_SCREEN_ON -> {
-                    // Only stop vibration if user actually unlocked the screen
-                    // Don't stop if it's just our wake lock turning screen on
-                    val keyguardManager = getSystemService(KEYGUARD_SERVICE) as android.app.KeyguardManager
-                    val isLocked = keyguardManager.isKeyguardLocked
-
-                    Log.d("nvm", "Screen turned ON - isLocked: $isLocked, isVibrationServiceRunning: $isVibrationServiceRunning")
-
-                    if (!isLocked && isVibrationServiceRunning) {
-                        // User actually unlocked the screen
-                        isScreenOn = true
-                        Log.d("nvm", "User unlocked screen - stopping vibration alert")
+                Intent.ACTION_USER_PRESENT -> {
+                    // USER_PRESENT fires when user unlocks the device (most reliable)
+                    isScreenOn = true
+                    Log.d("nvm", "USER_PRESENT received - user unlocked device")
+                    if (isVibrationServiceRunning) {
+                        Log.d("nvm", "Stopping vibration after unlock")
                         stopVibrationAlert()
-                    } else if (!isLocked && !isVibrationServiceRunning) {
-                        // User unlocked but vibration not running
-                        isScreenOn = true
-                    } else {
-                        // Screen on but still locked (wake lock effect)
-                        Log.d("nvm", "Screen on but still locked - keeping vibration running")
                     }
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    isScreenOn = true
+
+                    // Use a short delay to let keyguard state settle
+                    handler.postDelayed({
+                        val keyguardManager = getSystemService(KEYGUARD_SERVICE) as android.app.KeyguardManager
+                        val isLocked = keyguardManager.isKeyguardLocked
+
+                        Log.d("nvm", "Screen turned ON - isLocked: $isLocked, isVibrationServiceRunning: $isVibrationServiceRunning")
+
+                        if (!isLocked && isVibrationServiceRunning) {
+                            // Screen is ON and unlocked - stop vibration
+                            Log.d("nvm", "Screen unlocked (via SCREEN_ON) - stopping vibration alert")
+                            stopVibrationAlert()
+                        } else if (isLocked) {
+                            // Screen on but still locked (wake lock keeping it on for vibration)
+                            Log.d("nvm", "Screen on but locked - vibration continues")
+                        }
+                    }, 500) // 500ms delay to ensure keyguard state is accurate
                 }
             }
         }
