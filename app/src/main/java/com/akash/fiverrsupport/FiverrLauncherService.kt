@@ -6,7 +6,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -27,13 +31,16 @@ class FiverrLauncherService : Service() {
 
     // Screen wake-lock components
     private var windowManager: WindowManager? = null
-    private var overlayView: View? = null
+    private var overlayView: CircularTimerView? = null
     private var wakeLock: PowerManager.WakeLock? = null
+
+    private var nextLaunchTime = 0L
 
     private val launchRunnable = object : Runnable {
         override fun run() {
             if (isRunning) {
                 launchFiverrApp()
+                nextLaunchTime = System.currentTimeMillis() + launchInterval
                 handler.postDelayed(this, launchInterval)
             }
         }
@@ -78,6 +85,9 @@ class FiverrLauncherService : Service() {
                 // Cancel current scheduled task and reschedule with new interval
                 handler.removeCallbacks(launchRunnable)
                 if (isRunning) {
+                    // Restart timer with new interval
+                    overlayView?.stopTimer()
+                    overlayView?.startTimer(launchInterval)
                     handler.post(launchRunnable)
                 }
             }
@@ -88,7 +98,7 @@ class FiverrLauncherService : Service() {
     private fun createOverlay() {
         try {
             windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-            overlayView = View(this)
+            overlayView = CircularTimerView(this)
 
             val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -97,9 +107,10 @@ class FiverrLauncherService : Service() {
                 WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
             }
 
+            val overlaySize = 120 // 120dp for circular timer
             val params = WindowManager.LayoutParams(
-                1, // 1 pixel width
-                1, // 1 pixel height
+                overlaySize,
+                overlaySize,
                 layoutType,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
@@ -107,13 +118,14 @@ class FiverrLauncherService : Service() {
                         WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
                 PixelFormat.TRANSLUCENT
             ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                x = 0
-                y = 0
+                gravity = Gravity.TOP or Gravity.END
+                x = 20 // 20px from right edge
+                y = 100 // 100px from top
             }
 
             windowManager?.addView(overlayView, params)
-            Log.d("nvm", "Overlay window created with FLAG_KEEP_SCREEN_ON")
+            overlayView?.startTimer(launchInterval)
+            Log.d("nvm", "Circular timer overlay created")
         } catch (e: Exception) {
             Log.e("nvm", "Error creating overlay: ${e.message}", e)
         }
@@ -122,6 +134,7 @@ class FiverrLauncherService : Service() {
     private fun removeOverlay() {
         try {
             if (overlayView != null) {
+                overlayView?.stopTimer()
                 windowManager?.removeView(overlayView)
                 overlayView = null
             }
@@ -235,3 +248,96 @@ class FiverrLauncherService : Service() {
         const val EXTRA_INTERVAL = "EXTRA_INTERVAL"
     }
 }
+
+/**
+ * Custom View that displays a beautiful circular countdown timer
+ */
+class CircularTimerView(context: android.content.Context) : View(context) {
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var totalDuration = 20000L
+    private var startTime = 0L
+    private var isRunning = false
+
+    private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#80000000") // Semi-transparent black
+        style = Paint.Style.FILL
+    }
+
+    private val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#4CAF50") // Green
+        style = Paint.Style.STROKE
+        strokeWidth = 8f
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 24f
+        textAlign = Paint.Align.CENTER
+        isFakeBoldText = true
+    }
+
+    private val rectF = RectF()
+
+    private val updateRunnable = object : Runnable {
+        override fun run() {
+            if (isRunning) {
+                invalidate() // Trigger redraw
+                handler.postDelayed(this, 50) // Update every 50ms for smooth animation
+            }
+        }
+    }
+
+    fun startTimer(duration: Long) {
+        totalDuration = duration
+        startTime = System.currentTimeMillis()
+        isRunning = true
+        handler.post(updateRunnable)
+    }
+
+    fun stopTimer() {
+        isRunning = false
+        handler.removeCallbacks(updateRunnable)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+
+        val width = width.toFloat()
+        val height = height.toFloat()
+        val centerX = width / 2
+        val centerY = height / 2
+        val radius = (Math.min(width, height) / 2) - 10
+
+        // Draw background circle
+        canvas.drawCircle(centerX, centerY, radius, backgroundPaint)
+
+        // Calculate remaining time
+        val elapsed = System.currentTimeMillis() - startTime
+        val remaining = (totalDuration - elapsed).coerceAtLeast(0)
+        val progress = (remaining.toFloat() / totalDuration) * 360f
+
+        // Draw progress arc
+        rectF.set(
+            centerX - radius + 5,
+            centerY - radius + 5,
+            centerX + radius - 5,
+            centerY + radius - 5
+        )
+
+        // Draw arc from top (270 degrees) clockwise
+        canvas.drawArc(rectF, -90f, progress, false, progressPaint)
+
+        // Draw remaining time text
+        val seconds = (remaining / 1000).toInt()
+        val text = "${seconds}s"
+        canvas.drawText(text, centerX, centerY + 8, textPaint)
+
+        // Reset timer when it reaches 0
+        if (remaining <= 0) {
+            startTime = System.currentTimeMillis()
+        }
+    }
+}
+
