@@ -23,7 +23,7 @@ class FiverrLauncherService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var isRunning = false
-    private val launchInterval = 5000L
+    private var launchInterval = 20000L // Default 20 seconds
 
     // Screen wake-lock components
     private var windowManager: WindowManager? = null
@@ -47,11 +47,14 @@ class FiverrLauncherService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
+                // Get interval from intent, default to 20 seconds
+                launchInterval = intent.getLongExtra(EXTRA_INTERVAL, 20000L)
+
                 startForegroundServiceInternal()
                 isRunning = true
                 handler.post(launchRunnable)
 
-                Log.d("nvm", "FiverrLauncherService started")
+                Log.d("nvm", "FiverrLauncherService started with interval: ${launchInterval}ms")
 
                 // Create overlay and acquire wake lock
                 createOverlay()
@@ -67,6 +70,16 @@ class FiverrLauncherService : Service() {
 
                 stopForegroundServiceInternal()
                 Log.d("nvm", "FiverrLauncherService stopped")
+            }
+            ACTION_UPDATE_INTERVAL -> {
+                // Update interval without restarting service
+                launchInterval = intent.getLongExtra(EXTRA_INTERVAL, 20000L)
+                Log.d("nvm", "Interval updated to: ${launchInterval}ms")
+                // Cancel current scheduled task and reschedule with new interval
+                handler.removeCallbacks(launchRunnable)
+                if (isRunning) {
+                    handler.post(launchRunnable)
+                }
             }
         }
         return START_STICKY
@@ -202,5 +215,7 @@ class FiverrLauncherService : Service() {
         const val NOTIFICATION_ID = 1
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
+        const val ACTION_UPDATE_INTERVAL = "ACTION_UPDATE_INTERVAL"
+        const val EXTRA_INTERVAL = "EXTRA_INTERVAL"
     }
 }

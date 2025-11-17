@@ -2,43 +2,43 @@ package com.akash.fiverrsupport
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import android.text.TextUtils
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,10 +46,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.akash.fiverrsupport.ui.theme.FiverrSupportTheme
 import androidx.core.net.toUri
+import com.akash.fiverrsupport.ui.components.PermissionToggleItem
+import com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled
 
 class MainActivity : ComponentActivity() {
 
@@ -124,26 +129,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    private fun isAccessibilityServiceEnabled(context: Context): Boolean {
-        val expectedComponentName = ComponentName(context, FiverrAccessibilityService::class.java)
-        val enabledServicesSetting = Settings.Secure.getString(
-            context.contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ) ?: return false
-
-        val colonSplitter = TextUtils.SimpleStringSplitter(':')
-        colonSplitter.setString(enabledServicesSetting)
-
-        while (colonSplitter.hasNext()) {
-            val componentNameString = colonSplitter.next()
-            val enabledService = ComponentName.unflattenFromString(componentNameString)
-            if (enabledService != null && enabledService == expectedComponentName) {
-                return true
-            }
-        }
-        return false
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -168,16 +153,90 @@ fun Root(modifier: Modifier = Modifier) {
         }
     ) { innerPadding ->
         val context = LocalContext.current
+        val lifecycleOwner = LocalLifecycleOwner.current
+
+        // Load saved interval from SharedPreferences
+        val sharedPrefs = context.getSharedPreferences("FiverrSupportPrefs", Context.MODE_PRIVATE)
         var isEnabled by remember { mutableStateOf(false) }
+        var launchIntervalSeconds by remember {
+            mutableStateOf(sharedPrefs.getFloat("launch_interval", 20f)) // Default 20 seconds
+        }
+        var isAccessibilityEnabled by remember {
+            mutableStateOf(isAccessibilityServiceEnabled(context))
+        }
+        var isOverlayEnabled by remember {
+            mutableStateOf(Settings.canDrawOverlays(context))
+        }
+        var isNotificationEnabled by remember {
+            mutableStateOf(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.POST_NOTIFICATIONS
+                    ) == PackageManager.PERMISSION_GRANTED
+                } else {
+                    true // Always true for older versions
+                }
+            )
+        }
+        var isBatteryOptimizationDisabled by remember {
+            mutableStateOf(
+                (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
+                    .isIgnoringBatteryOptimizations(context.packageName)
+            )
+        }
+
+        // Update all permission states when activity resumes
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    isAccessibilityEnabled = isAccessibilityServiceEnabled(context)
+                    isOverlayEnabled = Settings.canDrawOverlays(context)
+                    isNotificationEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) == PackageManager.PERMISSION_GRANTED
+                    } else {
+                        true
+                    }
+                    isBatteryOptimizationDisabled =
+                        (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
+                            .isIgnoringBatteryOptimizations(context.packageName)
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+            }
+        }
 
         // Start or stop the foreground service based on the switch state
         fun toggleService(enabled: Boolean) {
             val serviceIntent = Intent(context, FiverrLauncherService::class.java)
             serviceIntent.action = if (enabled) FiverrLauncherService.ACTION_START else FiverrLauncherService.ACTION_STOP
 
+            // Pass interval when starting the service
+            if (enabled) {
+                serviceIntent.putExtra(FiverrLauncherService.EXTRA_INTERVAL, (launchIntervalSeconds * 1000).toLong())
+            }
+
             if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent)
             } else {
+                context.startService(serviceIntent)
+            }
+        }
+
+        // Update interval while service is running
+        fun updateInterval(intervalSeconds: Float) {
+            // Save to SharedPreferences
+            sharedPrefs.edit().putFloat("launch_interval", intervalSeconds).apply()
+
+            if (isEnabled) {
+                val serviceIntent = Intent(context, FiverrLauncherService::class.java)
+                serviceIntent.action = FiverrLauncherService.ACTION_UPDATE_INTERVAL
+                serviceIntent.putExtra(FiverrLauncherService.EXTRA_INTERVAL, (intervalSeconds * 1000).toLong())
                 context.startService(serviceIntent)
             }
         }
@@ -188,76 +247,187 @@ fun Root(modifier: Modifier = Modifier) {
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
-            // Test Fiverr app button
-            Button(onClick = {
-                try {
-                    val intent = context.packageManager.getLaunchIntentForPackage("com.fiverr.fiverr")
-                    if (intent != null) {
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                        context.startActivity(intent)
-                        Toast.makeText(context, "Opening Fiverr app...", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(context, "Fiverr app is not installed on this device", Toast.LENGTH_LONG).show()
-                    }
-                } catch (e: Exception) {
-                    Toast.makeText(context, "Error opening app: ${e.message}", Toast.LENGTH_LONG).show()
+            // Permissions Section Header
+            Text(
+                text = "Required Permissions",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            // Accessibility Service toggle
+            PermissionToggleItem(
+                icon = Icons.Default.Settings,
+                title = "Accessibility Service",
+                isEnabled = isAccessibilityEnabled,
+                enabledText = "Service is enabled",
+                disabledText = "Service is disabled",
+                onToggle = {
+                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    context.startActivity(intent)
+                    Toast.makeText(
+                        context,
+                        "Please enable 'Fiverr Support' in Accessibility",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
-            }) {
-                Text(text = "Open Fiverr App")
-            }
+            )
 
-            Spacer(modifier = Modifier.padding(8.dp))
+            Spacer(modifier = Modifier.padding(4.dp))
 
-            // Accessibility settings button
-            Button(onClick = {
-                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                context.startActivity(intent)
-                Toast.makeText(context, "Enable 'Fiverr Support' in Accessibility", Toast.LENGTH_LONG).show()
-            }) {
-                Text(text = "Open Accessibility Settings")
-            }
+            // Display Overlay Permission toggle
+            PermissionToggleItem(
+                icon = Icons.Default.Star,
+                title = "Display Overlay Permission",
+                isEnabled = isOverlayEnabled,
+                enabledText = "Permission granted",
+                disabledText = "Permission required",
+                onToggle = {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        "package:${context.packageName}".toUri()
+                    )
+                    context.startActivity(intent)
+                    Toast.makeText(
+                        context,
+                        "Please grant overlay permission",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            )
 
-            Spacer(modifier = Modifier.padding(8.dp))
+            Spacer(modifier = Modifier.padding(4.dp))
+
+            // Notification Permission toggle
+            PermissionToggleItem(
+                icon = Icons.Default.Notifications,
+                title = "Notification Permission",
+                isEnabled = isNotificationEnabled,
+                enabledText = "Permission granted",
+                disabledText = "Permission required",
+                onToggle = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        }
+                        context.startActivity(intent)
+                        Toast.makeText(
+                            context,
+                            "Please enable notifications",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            )
+
+            Spacer(modifier = Modifier.padding(4.dp))
+
+            // Battery Optimization toggle
+            PermissionToggleItem(
+                icon = Icons.Default.Warning,
+                title = "Battery Optimization",
+                isEnabled = isBatteryOptimizationDisabled,
+                enabledText = "Exemption granted",
+                disabledText = "Exemption required",
+                onToggle = {
+                    val intent =
+                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = "package:${context.packageName}".toUri()
+                        }
+                    try {
+                        context.startActivity(intent)
+                        Toast.makeText(
+                            context,
+                            "Please allow battery optimization exemption",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(
+                            context,
+                            "Could not open battery settings",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            )
+
+            // Divider between permissions and features
+            Spacer(modifier = Modifier.padding(12.dp))
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+            Spacer(modifier = Modifier.padding(12.dp))
+
+            // App Features Section Header
+            Text(
+                text = "App Features",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
 
             // Service toggle
-            Row(
+            PermissionToggleItem(
+                icon = Icons.Default.Build,
+                title = "Enable Support Service",
+                isEnabled = isEnabled,
+                enabledText = "Service is running",
+                disabledText = "Service is disabled",
+                onToggle = {
+                    isEnabled = !isEnabled
+                    toggleService(isEnabled)
+                }
+            )
+
+            Spacer(modifier = Modifier.padding(8.dp))
+
+            // Launch Interval Slider
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .fillMaxSize()
+                    .padding(vertical = 8.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.padding(bottom = 8.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Build,
-                        contentDescription = "App Status",
+                        contentDescription = "Launch Interval",
                         modifier = Modifier.size(40.dp),
-                        tint = if (isEnabled) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.width(16.dp))
                     Column {
                         Text(
-                            text = "Enable Support Service",
+                            text = "Launch Interval: ${launchIntervalSeconds.toInt()} seconds",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = if (isEnabled) "Service is running" else "Service is disabled",
+                            text = "Fiverr app will open every ${launchIntervalSeconds.toInt()} seconds",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                Switch(
-                    checked = isEnabled,
-                    onCheckedChange = {
-                        isEnabled = it
-                        toggleService(it)
-                    }
+                Slider(
+                    value = launchIntervalSeconds,
+                    onValueChange = {
+                        launchIntervalSeconds = it
+                        updateInterval(it)
+                    },
+                    valueRange = 3f..30f,
+                    steps = 26, // 3, 4, 5, ... 30 (28 values total, so 26 steps between)
+                    enabled = true
+                )
+                Text(
+                    text = "Range: 3-30 seconds",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
