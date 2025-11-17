@@ -252,6 +252,10 @@ class FiverrLauncherService : Service() {
             if (isRunning && !isPaused) {
                 handleFiverrAction()
                 nextLaunchTime = System.currentTimeMillis() + launchInterval
+
+                // Reset the timer to restart countdown after action
+                overlayView?.resetTimer()
+                Log.d("nvm", "Timer reset after Fiverr action - countdown restarted")
             }
             if (isRunning) {
                 handler.postDelayed(this, launchInterval)
@@ -1086,12 +1090,8 @@ class CircularTimerView(context: android.content.Context) : View(context) {
 
         // Draw remaining time text
         val seconds = (remaining / 1000).toInt()
-        val text = if (isPaused) "${seconds}s" else "${seconds}s"
+        val text = "${seconds}s"
         canvas.drawText(text, centerX, centerY + 8, textPaint)
-
-        // Reset timer when it reaches 0 (only if not paused)
-        if (remaining <= 0 && !isPaused) {
-            startTime = System.currentTimeMillis()
         }
     }
 }
