@@ -87,16 +87,37 @@ class FiverrLauncherService : Service() {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     isScreenOn = false
-                    Log.d("nvm", "Screen turned OFF - starting vibration alert")
+                    Log.d("nvm", "Screen turned OFF - pausing service and starting vibration")
+
+                    // Pause the service (like touch does) but without idle checker
+                    // We'll resume after 3 seconds on unlock instead
+                    if (!isPaused && isRunning) {
+                        pauseService(startIdleChecker = false) // Don't start idle checker for screen lock
+                        Log.d("nvm", "Service paused due to screen lock")
+                    }
+
+                    // Start vibration alert
                     startVibrationAlert()
                 }
                 Intent.ACTION_USER_PRESENT -> {
                     // USER_PRESENT fires when user unlocks the device (most reliable)
                     isScreenOn = true
                     Log.d("nvm", "USER_PRESENT received - user unlocked device")
+
+                    // Stop vibration
                     if (isVibrationServiceRunning) {
                         Log.d("nvm", "Stopping vibration after unlock")
                         stopVibrationAlert()
+                    }
+
+                    // Resume service after 3 seconds (if paused and running)
+                    if (isPaused && isRunning) {
+                        handler.postDelayed({
+                            if (isPaused && isRunning) {
+                                Log.d("nvm", "Auto-resuming service 3 seconds after unlock")
+                                resumeService()
+                            }
+                        }, 3000) // Resume after 3 seconds
                     }
                 }
                 Intent.ACTION_SCREEN_ON -> {
@@ -113,6 +134,16 @@ class FiverrLauncherService : Service() {
                             // Screen is ON and unlocked - stop vibration
                             Log.d("nvm", "Screen unlocked (via SCREEN_ON) - stopping vibration alert")
                             stopVibrationAlert()
+
+                            // Resume service after 3 seconds (if paused and running)
+                            if (isPaused && isRunning) {
+                                handler.postDelayed({
+                                    if (isPaused && isRunning) {
+                                        Log.d("nvm", "Auto-resuming service 3 seconds after unlock")
+                                        resumeService()
+                                    }
+                                }, 3000) // Resume after 3 seconds
+                            }
                         } else if (isLocked) {
                             // Screen on but still locked (wake lock keeping it on for vibration)
                             Log.d("nvm", "Screen on but locked - vibration continues")
@@ -415,11 +446,13 @@ class FiverrLauncherService : Service() {
     }
 
     // Pause the service (stop opening Fiverr, turn timer red)
-    private fun pauseService() {
+    private fun pauseService(startIdleChecker: Boolean = true) {
         isPaused = true
         overlayView?.setPaused(true) // Turn timer red
-        handler.post(idleCheckerRunnable) // Start idle checker
-        Log.d("nvm", "Service paused due to user interaction")
+        if (startIdleChecker) {
+            handler.post(idleCheckerRunnable) // Start idle checker only for touch events
+        }
+        Log.d("nvm", "Service paused ${if (startIdleChecker) "with idle checker" else "without idle checker"}")
     }
 
     // Resume the service (start opening Fiverr, turn timer green)
