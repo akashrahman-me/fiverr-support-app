@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Notifications
@@ -218,6 +220,11 @@ fun Root(modifier: Modifier = Modifier) {
                 ) == PackageManager.PERMISSION_GRANTED
             )
         }
+        var isAccessibilityEnabled by remember {
+            mutableStateOf(
+                com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled(context)
+            )
+        }
 
         // Update all permission states when activity resumes
         DisposableEffect(lifecycleOwner) {
@@ -246,6 +253,8 @@ fun Root(modifier: Modifier = Modifier) {
                         context,
                         Manifest.permission.READ_PHONE_STATE
                     ) == PackageManager.PERMISSION_GRANTED
+
+                    isAccessibilityEnabled = com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled(context)
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
@@ -294,6 +303,7 @@ fun Root(modifier: Modifier = Modifier) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
             // Permissions Section Header
@@ -421,6 +431,26 @@ fun Root(modifier: Modifier = Modifier) {
                     Toast.makeText(
                         context,
                         "Please grant Phone permission in app settings",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            )
+
+            Spacer(modifier = Modifier.padding(4.dp))
+
+            // Accessibility Service toggle
+            PermissionToggleItem(
+                icon = Icons.Default.Star, // Touch gesture icon
+                title = "Accessibility Service",
+                isEnabled = isAccessibilityEnabled,
+                enabledText = "Service enabled",
+                disabledText = "Required for auto-scroll & app detection",
+                onToggle = {
+                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    context.startActivity(intent)
+                    Toast.makeText(
+                        context,
+                        "Please enable Fiverr Support accessibility service",
                         Toast.LENGTH_LONG
                     ).show()
                 }

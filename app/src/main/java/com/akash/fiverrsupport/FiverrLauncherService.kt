@@ -41,6 +41,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.akash.fiverrsupport.utils.isAppInForeground
 
 class FiverrLauncherService : Service() {
 
@@ -246,7 +247,7 @@ class FiverrLauncherService : Service() {
     private val launchRunnable = object : Runnable {
         override fun run() {
             if (isRunning && !isPaused) {
-                launchFiverrApp()
+                handleFiverrAction()
                 nextLaunchTime = System.currentTimeMillis() + launchInterval
             }
             if (isRunning) {
@@ -531,6 +532,49 @@ class FiverrLauncherService : Service() {
             }
             val notificationManager = getSystemService(NotificationManager::class.java)
             notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    /**
+     * Main logic: Check if Fiverr is in foreground
+     * - If YES: Perform pull-down scroll gesture (via accessibility)
+     * - If NO: Launch/bring Fiverr to front
+     */
+    private fun handleFiverrAction() {
+        val fiverrPackage = "com.fiverr.fiverr"
+
+        // Check if Fiverr app is currently in foreground
+        val isFiverrInFront = isAppInForeground(this, fiverrPackage)
+
+        if (isFiverrInFront) {
+            // Fiverr is already in front, perform scroll gesture
+            Log.d("nvm", "Fiverr app is in foreground - performing pull-down gesture")
+            performScrollGesture()
+        } else {
+            // Fiverr is not in front, launch it
+            Log.d("nvm", "Fiverr app is NOT in foreground - launching app")
+            launchFiverrApp()
+        }
+    }
+
+    /**
+     * Perform pull-down scroll gesture using Accessibility Service
+     */
+    private fun performScrollGesture() {
+        val accessibilityService = FiverrAccessibilityService.getInstance()
+
+        if (accessibilityService == null) {
+            Log.w("nvm", "Accessibility service not available - cannot perform scroll gesture")
+            Toast.makeText(this, "Enable accessibility service to perform auto-scroll", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        accessibilityService.performPullDownGesture { success ->
+            if (success) {
+                Log.d("nvm", "Pull-down gesture executed successfully")
+            } else {
+                Log.e("nvm", "Failed to execute pull-down gesture")
+            }
         }
     }
 

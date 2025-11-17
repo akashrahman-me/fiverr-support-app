@@ -1,21 +1,35 @@
 package com.akash.fiverrsupport
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+
+/**
+ * Singleton holder for tracking the current foreground app package
+ */
+object ForegroundAppHolder {
+    var currentPackage: String? = null
+}
 
 class FiverrAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.d("nvm", "FiverrAccessibilityService connected")
+        instance = this
+        Log.d("nvm", "FiverrAccessibilityService connected and ready")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // We'll use this later for automation tasks
-//        event?.let {
-//            Log.d("nvm", "Accessibility event: ${it.eventType}")
-//        }
+        // Track foreground app changes
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            event.packageName?.toString()?.let { packageName ->
+                ForegroundAppHolder.currentPackage = packageName
+                Log.d("nvm", "Foreground app changed to: $packageName")
+            }
+        }
     }
 
     override fun onInterrupt() {
@@ -24,23 +38,73 @@ class FiverrAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        instance = null
         Log.d("nvm", "FiverrAccessibilityService destroyed")
+    }
+
+    /**
+     * Perform a pull-down/scroll gesture in the Fiverr app
+     * Simulates a swipe from top to bottom (pull to refresh)
+     */
+    fun performPullDownGesture(callback: (Boolean) -> Unit) {
+
+        try {
+            val displayMetrics = resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+
+            // Create a path for pull-down gesture (swipe from top-center down)
+            val path = Path()
+            val startX = screenWidth / 2f
+            val startY = screenHeight * 0.3f // Start at 30% from top
+            val endY = screenHeight * 0.7f    // End at 70% from top
+
+            path.moveTo(startX, startY)
+            path.lineTo(startX, endY)
+
+            // Create gesture description
+            val gestureBuilder = GestureDescription.Builder()
+            val gestureStroke = GestureDescription.StrokeDescription(path, 0, 300) // 300ms duration
+            gestureBuilder.addStroke(gestureStroke)
+
+            // Dispatch gesture
+            val result = dispatchGesture(
+                gestureBuilder.build(),
+                object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        Log.d("nvm", "Pull-down gesture completed successfully")
+                        callback(true)
+                    }
+
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        Log.w("nvm", "Pull-down gesture was cancelled")
+                        callback(false)
+                    }
+                },
+                null
+            )
+
+            if (!result) {
+                Log.e("nvm", "Failed to dispatch pull-down gesture")
+                callback(false)
+            }
+        } catch (e: Exception) {
+            Log.e("nvm", "Error performing pull-down gesture: ${e.message}", e)
+            callback(false)
+        }
     }
 
     companion object {
         private var instance: FiverrAccessibilityService? = null
 
-        fun isAccessibilityEnabled(): Boolean {
-            return instance != null
-        }
-
         fun getInstance(): FiverrAccessibilityService? {
             return instance
         }
-    }
 
-    init {
-        instance = this
+        fun isAccessibilityEnabled(): Boolean {
+            return instance != null
+        }
     }
 }
+
 

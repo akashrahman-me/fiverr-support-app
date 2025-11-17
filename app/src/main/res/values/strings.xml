@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Fiverr Support</string>
+    <string name="accessibility_service_description">Allows Fiverr Support to automatically scroll and interact with the Fiverr app, and detect which app is currently in the foreground</string>
+    <string name="app_watcher_service_description">Detects which app is currently in the foreground for smart app management</string>
 </resources>
