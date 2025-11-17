@@ -52,6 +52,9 @@ class FiverrLauncherService : Service() {
     private var lastUserInteractionTime = 0L
     private val idleTimeout = 60000L // 1 minute = 60 seconds
 
+    // Flag to ignore touch events during automated gestures
+    private var isPerformingAutomatedGesture = false
+
     // Screen wake-lock components
     private var windowManager: WindowManager? = null
     private var overlayView: CircularTimerView? = null
@@ -569,12 +572,22 @@ class FiverrLauncherService : Service() {
             return
         }
 
+        // Set flag to ignore touch events during automated gesture
+        isPerformingAutomatedGesture = true
+        Log.d("nvm", "Starting automated gesture - touch detection disabled")
+
         accessibilityService.performPullDownGesture { success ->
             if (success) {
                 Log.d("nvm", "Pull-down gesture executed successfully")
             } else {
                 Log.e("nvm", "Failed to execute pull-down gesture")
             }
+
+            // Re-enable touch detection after a short delay (gesture completion + 500ms buffer)
+            handler.postDelayed({
+                isPerformingAutomatedGesture = false
+                Log.d("nvm", "Automated gesture completed - touch detection re-enabled")
+            }, 800) // 300ms gesture duration + 500ms buffer
         }
     }
 
@@ -594,6 +607,13 @@ class FiverrLauncherService : Service() {
 
     // Called when user touches the screen
     private fun userTouched() {
+        // Ignore touch events during automated gestures
+        if (isPerformingAutomatedGesture) {
+            Log.d("nvm", "Touch detected during automated gesture - ignoring")
+            return
+        }
+
+        Log.d("nvm", "User touch detected - pausing service")
         lastUserInteractionTime = System.currentTimeMillis()
 
         if (!isPaused) {
