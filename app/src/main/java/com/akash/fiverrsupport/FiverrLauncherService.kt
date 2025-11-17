@@ -210,6 +210,22 @@ class FiverrLauncherService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // Service continues running even when app is removed from recents
+        // START_STICKY in onStartCommand ensures it restarts if killed
+        Log.d("nvm", "App removed from recents, but service continues running")
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        isRunning = false
+        handler.removeCallbacks(launchRunnable)
+        removeOverlay()
+        releaseWakeLock()
+        Log.d("nvm", "FiverrLauncherService destroyed")
+    }
+
     companion object {
         const val CHANNEL_ID = "FiverrSupportChannel"
         const val NOTIFICATION_ID = 1

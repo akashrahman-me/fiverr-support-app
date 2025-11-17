@@ -2,6 +2,7 @@ package com.akash.fiverrsupport
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -40,6 +41,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,6 +57,17 @@ import com.akash.fiverrsupport.ui.theme.FiverrSupportTheme
 import androidx.core.net.toUri
 import com.akash.fiverrsupport.ui.components.PermissionToggleItem
 import com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled
+
+fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
+    val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+    @Suppress("DEPRECATION")
+    for (service in activityManager.getRunningServices(Int.MAX_VALUE)) {
+        if (serviceClass.name == service.service.className) {
+            return true
+        }
+    }
+    return false
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -157,9 +170,13 @@ fun Root(modifier: Modifier = Modifier) {
 
         // Load saved interval from SharedPreferences
         val sharedPrefs = context.getSharedPreferences("FiverrSupportPrefs", Context.MODE_PRIVATE)
-        var isEnabled by remember { mutableStateOf(false) }
+
+        // Check if service is actually running
+        var isEnabled by remember {
+            mutableStateOf(isServiceRunning(context, FiverrLauncherService::class.java))
+        }
         var launchIntervalSeconds by remember {
-            mutableStateOf(sharedPrefs.getFloat("launch_interval", 20f)) // Default 20 seconds
+            mutableFloatStateOf(sharedPrefs.getFloat("launch_interval", 20f)) // Default 20 seconds
         }
         var isAccessibilityEnabled by remember {
             mutableStateOf(isAccessibilityServiceEnabled(context))
@@ -190,6 +207,9 @@ fun Root(modifier: Modifier = Modifier) {
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_RESUME) {
+                    // Check if service is actually running
+                    isEnabled = isServiceRunning(context, FiverrLauncherService::class.java)
+
                     isAccessibilityEnabled = isAccessibilityServiceEnabled(context)
                     isOverlayEnabled = Settings.canDrawOverlays(context)
                     isNotificationEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
