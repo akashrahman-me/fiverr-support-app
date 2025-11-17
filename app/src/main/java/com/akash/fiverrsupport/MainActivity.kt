@@ -287,13 +287,19 @@ fun Root(modifier: Modifier = Modifier) {
         }
 
         // Update interval while service is running
-        fun updateInterval(intervalSeconds: Float) {
+        fun updateInterval(intervalSeconds: Float, isUserInteracting: Boolean = false) {
             // Save to SharedPreferences
             sharedPrefs.edit { putFloat("launch_interval", intervalSeconds) }
 
             if (isEnabled) {
                 val serviceIntent = Intent(context, FiverrLauncherService::class.java)
-                serviceIntent.action = FiverrLauncherService.ACTION_UPDATE_INTERVAL
+                if (isUserInteracting) {
+                    // User is actively dragging slider - pause service
+                    serviceIntent.action = FiverrLauncherService.ACTION_PAUSE_FOR_SLIDER
+                } else {
+                    // User finished dragging - update interval and resume
+                    serviceIntent.action = FiverrLauncherService.ACTION_UPDATE_INTERVAL
+                }
                 serviceIntent.putExtra(FiverrLauncherService.EXTRA_INTERVAL, (intervalSeconds * 1000).toLong())
                 context.startService(serviceIntent)
             }
@@ -522,11 +528,17 @@ fun Root(modifier: Modifier = Modifier) {
                 Slider(
                     value = launchIntervalSeconds,
                     onValueChange = {
-                        launchIntervalSeconds = it
-                        updateInterval(it)
+                        // Round to nearest integer to avoid floating point issues
+                        launchIntervalSeconds = it.toInt().toFloat()
+                        // Pause service while user is dragging slider
+                        updateInterval(launchIntervalSeconds, isUserInteracting = true)
+                    },
+                    onValueChangeFinished = {
+                        // User released the slider - update interval and resume service
+                        updateInterval(launchIntervalSeconds, isUserInteracting = false)
                     },
                     valueRange = 3f..30f,
-                    steps = 26, // 3, 4, 5, ... 30 (28 values total, so 26 steps between)
+                    steps = 26, // 27 values (3 to 30) means 26 steps between them
                     enabled = true
                 )
                 Text(

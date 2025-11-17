@@ -383,7 +383,7 @@ class FiverrLauncherService : Service() {
                 Log.d("nvm", "FiverrLauncherService stopped")
             }
             ACTION_UPDATE_INTERVAL -> {
-                // Update interval without restarting service
+                // User finished dragging slider - update interval and resume
                 launchInterval = intent.getLongExtra(EXTRA_INTERVAL, 20000L)
 
                 // Save updated interval - use commit() for immediate write
@@ -392,14 +392,42 @@ class FiverrLauncherService : Service() {
                     .putLong("service_interval", launchInterval)
                     .commit()
 
-                Log.d("nvm", "Interval updated to: ${launchInterval}ms")
+                Log.d("nvm", "Interval updated to: ${launchInterval}ms, rescheduling handler")
                 // Cancel current scheduled task and reschedule with new interval
                 handler.removeCallbacks(launchRunnable)
-                if (isRunning) {
-                    // Restart timer with new interval
+                if (isRunning && !isPaused) {
+                    // If service was running (not paused), restart with new interval
                     overlayView?.stopTimer()
                     overlayView?.startTimer(launchInterval)
-                    handler.post(launchRunnable)
+                    // Schedule next action with the new interval (not immediate)
+                    handler.postDelayed(launchRunnable, launchInterval)
+                    Log.d("nvm", "Handler rescheduled to run in ${launchInterval}ms")
+                } else if (isRunning && isPaused) {
+                    // Service is paused - just update the timer duration
+                    overlayView?.stopTimer()
+                    overlayView?.startTimer(launchInterval)
+                    overlayView?.setPaused(true) // Keep it paused
+                }
+            }
+            ACTION_PAUSE_FOR_SLIDER -> {
+                // User is dragging slider - pause service temporarily
+                launchInterval = intent.getLongExtra(EXTRA_INTERVAL, 20000L)
+
+                Log.d("nvm", "Slider interaction detected - pausing service temporarily")
+                if (isRunning && !isPaused) {
+                    // Pause the service
+                    lastUserInteractionTime = System.currentTimeMillis()
+                    pauseService(startIdleChecker = false) // Don't start idle checker for slider
+
+                    // Update timer with new interval but keep it paused
+                    overlayView?.stopTimer()
+                    overlayView?.startTimer(launchInterval)
+                    overlayView?.setPaused(true)
+                } else if (isRunning && isPaused) {
+                    // Already paused, just update timer
+                    overlayView?.stopTimer()
+                    overlayView?.startTimer(launchInterval)
+                    overlayView?.setPaused(true)
                 }
             }
         }
@@ -646,10 +674,13 @@ class FiverrLauncherService : Service() {
         overlayView?.resetTimer() // Reset timer to start fresh
         handler.removeCallbacks(idleCheckerRunnable) // Stop idle checker
 
+        // Restart the handler with the current interval
+        handler.removeCallbacks(launchRunnable) // Remove any existing callbacks
+        handler.postDelayed(launchRunnable, launchInterval) // Schedule next action
+        Log.d("nvm", "Service resumed - handler scheduled to run in ${launchInterval}ms")
+
         // Reduce brightness to 0 when service resumes
         reduceBrightness()
-
-        Log.d("nvm", "Service resumed")
     }
 
     // Check if any media is currently playing (music, video, etc.)
@@ -962,6 +993,7 @@ class FiverrLauncherService : Service() {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_UPDATE_INTERVAL = "ACTION_UPDATE_INTERVAL"
+        const val ACTION_PAUSE_FOR_SLIDER = "ACTION_PAUSE_FOR_SLIDER"
         const val EXTRA_INTERVAL = "EXTRA_INTERVAL"
         const val VIBRATION_CHANNEL_ID = "FiverrSupportVibrationChannel"
         const val VIBRATION_NOTIFICATION_ID = 2
@@ -1094,7 +1126,6 @@ class CircularTimerView(context: android.content.Context) : View(context) {
         canvas.drawText(text, centerX, centerY + 8, textPaint)
         }
     }
-}
 
 /**
  * Invisible tiny overlay to detect user touches via FLAG_WATCH_OUTSIDE_TOUCH
