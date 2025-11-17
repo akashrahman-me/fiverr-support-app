@@ -118,6 +118,21 @@ class MainActivity : ComponentActivity() {
             ).show()
         }
 
+        // Request WRITE_SETTINGS permission for brightness control
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!Settings.System.canWrite(this)) {
+                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                    data = "package:$packageName".toUri()
+                }
+                startActivity(intent)
+                Toast.makeText(
+                    this,
+                    "Please grant permission to modify system settings for brightness control",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
         // Request notification permission for Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(
@@ -204,6 +219,15 @@ fun Root(modifier: Modifier = Modifier) {
                     .isIgnoringBatteryOptimizations(context.packageName)
             )
         }
+        var isWriteSettingsEnabled by remember {
+            mutableStateOf(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    Settings.System.canWrite(context)
+                } else {
+                    true
+                }
+            )
+        }
 
         // Update all permission states when activity resumes
         DisposableEffect(lifecycleOwner) {
@@ -225,6 +249,12 @@ fun Root(modifier: Modifier = Modifier) {
                     isBatteryOptimizationDisabled =
                         (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
                             .isIgnoringBatteryOptimizations(context.packageName)
+
+                    isWriteSettingsEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        Settings.System.canWrite(context)
+                    } else {
+                        true
+                    }
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
@@ -381,6 +411,28 @@ fun Root(modifier: Modifier = Modifier) {
             )
 
             Spacer(modifier = Modifier.padding(4.dp))
+
+            // Write Settings Permission toggle
+            PermissionToggleItem(
+                icon = Icons.Default.Settings,
+                title = "Modify System Settings",
+                isEnabled = isWriteSettingsEnabled,
+                enabledText = "Permission granted",
+                disabledText = "Required for brightness control",
+                onToggle = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                            data = "package:${context.packageName}".toUri()
+                        }
+                        context.startActivity(intent)
+                        Toast.makeText(
+                            context,
+                            "Please grant permission to modify system settings",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            )
 
 
             // Divider between permissions and features

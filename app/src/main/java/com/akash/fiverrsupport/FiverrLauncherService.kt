@@ -25,6 +25,7 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.VibrationAttributes
 import android.os.Vibrator
+import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
@@ -51,6 +52,7 @@ class FiverrLauncherService : Service() {
     private var vibrator: Vibrator? = null
     private var isScreenOn = true
     private var isVibrationServiceRunning = false // Track if we intentionally started vibration
+    private var originalBrightness: Int = -1 // Store original brightness to restore later
 
     private var nextLaunchTime = 0L
 
@@ -449,9 +451,13 @@ class FiverrLauncherService : Service() {
     private fun pauseService(startIdleChecker: Boolean = true) {
         isPaused = true
         overlayView?.setPaused(true) // Turn timer red
+
+        // Restore brightness when paused by touch (not by screen lock)
         if (startIdleChecker) {
+            restoreBrightness()
             handler.post(idleCheckerRunnable) // Start idle checker only for touch events
         }
+
         Log.d("nvm", "Service paused ${if (startIdleChecker) "with idle checker" else "without idle checker"}")
     }
 
@@ -461,7 +467,87 @@ class FiverrLauncherService : Service() {
         overlayView?.setPaused(false) // Turn timer green
         overlayView?.resetTimer() // Reset timer to start fresh
         handler.removeCallbacks(idleCheckerRunnable) // Stop idle checker
+
+        // Reduce brightness to 0 when service resumes
+        reduceBrightness()
+
         Log.d("nvm", "Service resumed")
+    }
+
+    // Save current brightness and reduce to 0
+    private fun reduceBrightness() {
+        try {
+            // Save original brightness only once
+            if (originalBrightness == -1) {
+                originalBrightness = Settings.System.getInt(
+                    contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS
+                )
+                Log.d("nvm", "Original brightness saved: $originalBrightness")
+            }
+
+            // Method 1: Update Settings.System (for system-wide)
+            Settings.System.putInt(
+                contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS,
+                0
+            )
+
+            // Method 2: Update Window brightness (CRITICAL for Android 13+)
+            // This makes the change take effect immediately
+            overlayView?.let { view ->
+                val layoutParams = view.layoutParams as? WindowManager.LayoutParams
+                layoutParams?.screenBrightness = 0f // 0f = minimum brightness
+                windowManager?.updateViewLayout(view, layoutParams)
+                Log.d("nvm", "Window brightness reduced to 0")
+            }
+
+            // Also update touch detector view
+            touchDetectorView?.let { view ->
+                val layoutParams = view.layoutParams as? WindowManager.LayoutParams
+                layoutParams?.screenBrightness = 0f
+                windowManager?.updateViewLayout(view, layoutParams)
+            }
+
+            Log.d("nvm", "Brightness reduced to 0 (Settings + Window)")
+        } catch (e: Exception) {
+            Log.e("nvm", "Error reducing brightness: ${e.message}", e)
+            Log.w("nvm", "WRITE_SETTINGS permission may be required")
+        }
+    }
+
+    // Restore original brightness
+    private fun restoreBrightness() {
+        try {
+            if (originalBrightness != -1) {
+                // Method 1: Restore Settings.System
+                Settings.System.putInt(
+                    contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS,
+                    originalBrightness
+                )
+
+                // Method 2: Restore Window brightness (CRITICAL for Android 13+)
+                // Use BRIGHTNESS_OVERRIDE_NONE to let system control brightness
+                overlayView?.let { view ->
+                    val layoutParams = view.layoutParams as? WindowManager.LayoutParams
+                    layoutParams?.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                    windowManager?.updateViewLayout(view, layoutParams)
+                    Log.d("nvm", "Window brightness restored to system default")
+                }
+
+                touchDetectorView?.let { view ->
+                    val layoutParams = view.layoutParams as? WindowManager.LayoutParams
+                    layoutParams?.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                    windowManager?.updateViewLayout(view, layoutParams)
+                }
+
+                Log.d("nvm", "Brightness restored to: $originalBrightness (Settings + Window)")
+                originalBrightness = -1 // Reset flag
+            }
+        } catch (e: Exception) {
+            Log.e("nvm", "Error restoring brightness: ${e.message}", e)
+        }
     }
 
     // Helper to start both vibration engines
@@ -695,7 +781,7 @@ class CircularTimerView(context: android.content.Context) : View(context) {
 
         // Draw remaining time text
         val seconds = (remaining / 1000).toInt()
-        val text = if (isPaused) "⏸ ${seconds}s" else "${seconds}s"
+        val text = if (isPaused) "${seconds}s" else "${seconds}s"
         canvas.drawText(text, centerX, centerY + 8, textPaint)
 
         // Reset timer when it reaches 0 (only if not paused)
