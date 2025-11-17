@@ -92,10 +92,12 @@ class FiverrLauncherService : Service() {
                     Log.d("nvm", "Screen turned OFF - pausing service and starting vibration")
 
                     // Pause the service (like touch does) but without idle checker
-                    // We'll resume after 3 seconds on unlock instead
+                    // We'll resume after unlock instead
                     if (!isPaused && isRunning) {
+                        // Reset lastUserInteractionTime to 0 to mark this as "paused by screen lock"
+                        lastUserInteractionTime = 0
                         pauseService(startIdleChecker = false) // Don't start idle checker for screen lock
-                        Log.d("nvm", "Service paused due to screen lock")
+                        Log.d("nvm", "Service paused due to screen lock (lastUserInteractionTime reset to 0)")
                     }
 
                     // Start vibration alert
@@ -112,9 +114,20 @@ class FiverrLauncherService : Service() {
                         stopVibrationAlert()
                     }
 
-                    // Resume service instantly (if paused and running)
-                    if (isPaused && isRunning) {
-                        Log.d("nvm", "Auto-resuming service instantly after unlock")
+                    // Check if user was paused by touch interaction (idle checker is running)
+                    // If so, respect the 1-minute idle timeout instead of instant resume
+                    if (isPaused && isRunning && lastUserInteractionTime > 0) {
+                        val idleTime = System.currentTimeMillis() - lastUserInteractionTime
+                        if (idleTime >= idleTimeout) {
+                            Log.d("nvm", "Auto-resuming service after unlock (idle timeout met: ${idleTime}ms)")
+                            resumeService()
+                        } else {
+                            Log.d("nvm", "Not resuming yet - only ${idleTime}ms idle, need ${idleTimeout}ms (${idleTimeout - idleTime}ms remaining)")
+                            // Don't resume - let idle checker continue
+                        }
+                    } else if (isPaused && isRunning && lastUserInteractionTime == 0L) {
+                        // Service was paused by screen lock (not touch), so resume instantly
+                        Log.d("nvm", "Auto-resuming service instantly after unlock (paused by screen lock)")
                         resumeService()
                     } else {
                         Log.d("nvm", "Resume not needed (isPaused=$isPaused, isRunning=$isRunning)")
@@ -135,9 +148,18 @@ class FiverrLauncherService : Service() {
                             Log.d("nvm", "Screen unlocked (via SCREEN_ON) - stopping vibration alert")
                             stopVibrationAlert()
 
-                            // Resume service instantly (if paused and running)
-                            if (isPaused && isRunning) {
-                                Log.d("nvm", "Auto-resuming service instantly after unlock (via SCREEN_ON)")
+                            // Check if user was paused by touch interaction
+                            if (isPaused && isRunning && lastUserInteractionTime > 0) {
+                                val idleTime = System.currentTimeMillis() - lastUserInteractionTime
+                                if (idleTime >= idleTimeout) {
+                                    Log.d("nvm", "Auto-resuming service after unlock (via SCREEN_ON, idle timeout met: ${idleTime}ms)")
+                                    resumeService()
+                                } else {
+                                    Log.d("nvm", "Not resuming yet (via SCREEN_ON) - only ${idleTime}ms idle, need ${idleTimeout}ms")
+                                }
+                            } else if (isPaused && isRunning && lastUserInteractionTime == 0L) {
+                                // Service was paused by screen lock (not touch), so resume instantly
+                                Log.d("nvm", "Auto-resuming service instantly after unlock (via SCREEN_ON, paused by screen lock)")
                                 resumeService()
                             }
                         } else if (isLocked) {
