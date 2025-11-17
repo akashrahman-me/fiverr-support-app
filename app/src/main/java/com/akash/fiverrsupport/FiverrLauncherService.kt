@@ -104,8 +104,7 @@ class FiverrLauncherService : Service() {
                 Intent.ACTION_USER_PRESENT -> {
                     // USER_PRESENT fires when user unlocks the device (most reliable)
                     isScreenOn = true
-                    val unlockTime = System.currentTimeMillis()
-                    Log.d("nvm", "USER_PRESENT received - user unlocked device at $unlockTime")
+                    Log.d("nvm", "USER_PRESENT received - user unlocked device")
 
                     // Stop vibration
                     if (isVibrationServiceRunning) {
@@ -113,25 +112,16 @@ class FiverrLauncherService : Service() {
                         stopVibrationAlert()
                     }
 
-                    // Resume service after 3 seconds (if paused and running)
+                    // Resume service instantly (if paused and running)
                     if (isPaused && isRunning) {
-                        Log.d("nvm", "Scheduling service resume for 3 seconds from now...")
-                        handler.postDelayed({
-                            if (isPaused && isRunning) {
-                                val resumeTime = System.currentTimeMillis()
-                                Log.d("nvm", "Auto-resuming service 3 seconds after unlock (delay was ${resumeTime - unlockTime}ms)")
-                                resumeService()
-                            } else {
-                                Log.d("nvm", "Resume cancelled - service state changed (isPaused=$isPaused, isRunning=$isRunning)")
-                            }
-                        }, 3000) // Resume after 3 seconds
+                        Log.d("nvm", "Auto-resuming service instantly after unlock")
+                        resumeService()
                     } else {
-                        Log.d("nvm", "Resume not scheduled (isPaused=$isPaused, isRunning=$isRunning)")
+                        Log.d("nvm", "Resume not needed (isPaused=$isPaused, isRunning=$isRunning)")
                     }
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     isScreenOn = true
-                    val screenOnTime = System.currentTimeMillis()
 
                     // Use a short delay to let keyguard state settle
                     handler.postDelayed({
@@ -145,18 +135,10 @@ class FiverrLauncherService : Service() {
                             Log.d("nvm", "Screen unlocked (via SCREEN_ON) - stopping vibration alert")
                             stopVibrationAlert()
 
-                            // Resume service after 3 seconds (if paused and running)
+                            // Resume service instantly (if paused and running)
                             if (isPaused && isRunning) {
-                                Log.d("nvm", "Scheduling service resume for 3 seconds from now (via SCREEN_ON)...")
-                                handler.postDelayed({
-                                    if (isPaused && isRunning) {
-                                        val resumeTime = System.currentTimeMillis()
-                                        Log.d("nvm", "Auto-resuming service 3 seconds after unlock (delay was ${resumeTime - screenOnTime}ms)")
-                                        resumeService()
-                                    } else {
-                                        Log.d("nvm", "Resume cancelled - service state changed (isPaused=$isPaused, isRunning=$isRunning)")
-                                    }
-                                }, 3000) // Resume after 3 seconds
+                                Log.d("nvm", "Auto-resuming service instantly after unlock (via SCREEN_ON)")
+                                resumeService()
                             }
                         } else if (isLocked) {
                             // Screen on but still locked (wake lock keeping it on for vibration)

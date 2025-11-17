@@ -1,4 +1,3 @@
 <resources>
-    <string name="app_name">FiverrSupport</string>
-    <string name="accessibility_service_description">Fiverr Support accessibility service for automating tasks in the Fiverr app.</string>
+    <string name="app_name">Fiverr Support</string>
 </resources>

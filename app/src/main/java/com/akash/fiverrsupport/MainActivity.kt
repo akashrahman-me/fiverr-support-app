@@ -58,7 +58,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.akash.fiverrsupport.ui.theme.FiverrSupportTheme
 import androidx.core.net.toUri
 import com.akash.fiverrsupport.ui.components.PermissionToggleItem
-import com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled
 
 fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
     val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -144,14 +143,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Check if accessibility service is enabled
-        if (!isAccessibilityServiceEnabled(this)) {
-            Toast.makeText(
-                this,
-                "Please enable Accessibility Service for automation features",
-                Toast.LENGTH_LONG
-            ).show()
-        }
 
         setContent {
             FiverrSupportTheme {
@@ -195,9 +186,6 @@ fun Root(modifier: Modifier = Modifier) {
         var launchIntervalSeconds by remember {
             mutableFloatStateOf(sharedPrefs.getFloat("launch_interval", 20f)) // Default 20 seconds
         }
-        var isAccessibilityEnabled by remember {
-            mutableStateOf(isAccessibilityServiceEnabled(context))
-        }
         var isOverlayEnabled by remember {
             mutableStateOf(Settings.canDrawOverlays(context))
         }
@@ -236,7 +224,6 @@ fun Root(modifier: Modifier = Modifier) {
                     // Check if service is actually running
                     isEnabled = isServiceRunning(context, FiverrLauncherService::class.java)
 
-                    isAccessibilityEnabled = isAccessibilityServiceEnabled(context)
                     isOverlayEnabled = Settings.canDrawOverlays(context)
                     isNotificationEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         ContextCompat.checkSelfPermission(
@@ -314,25 +301,6 @@ fun Root(modifier: Modifier = Modifier) {
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
-            // Accessibility Service toggle
-            PermissionToggleItem(
-                icon = Icons.Default.Settings,
-                title = "Accessibility Service",
-                isEnabled = isAccessibilityEnabled,
-                enabledText = "Service is enabled",
-                disabledText = "Service is disabled",
-                onToggle = {
-                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                    context.startActivity(intent)
-                    Toast.makeText(
-                        context,
-                        "Please enable 'Fiverr Support' in Accessibility",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            )
-
-            Spacer(modifier = Modifier.padding(4.dp))
 
             // Display Overlay Permission toggle
             PermissionToggleItem(
