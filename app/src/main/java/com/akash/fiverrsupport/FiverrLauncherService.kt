@@ -214,6 +214,12 @@ class FiverrLauncherService : Service() {
                 acquireWakeLock()
                 Log.d("nvm", "Service restored successfully")
 
+                // Reduce brightness when service is restored (if screen is on)
+                if (isScreenOn) {
+                    Log.d("nvm", "Reducing brightness on service restore")
+                    reduceBrightness()
+                }
+
                 // Check if screen is off and start vibration if needed
                 if (!isScreenOn) {
                     Log.d("nvm", "Service restored with screen OFF - starting vibration alert")
@@ -249,6 +255,12 @@ class FiverrLauncherService : Service() {
                 // Create overlay and acquire wake lock
                 createOverlay()
                 acquireWakeLock()
+
+                // Reduce brightness when service starts (if screen is on)
+                if (isScreenOn) {
+                    Log.d("nvm", "Reducing brightness on service start")
+                    reduceBrightness()
+                }
 
                 // Check if screen is off and start vibration if needed
                 if (!isScreenOn) {
