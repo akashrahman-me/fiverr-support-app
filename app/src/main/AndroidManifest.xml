@@ -43,13 +43,9 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Fiverr app launcher" />
+                android:value="Fiverr app launcher with screen wake-lock" />
         </service>
 
-        <service
-            android:name=".KeepScreenOnService"
-            android:enabled="true"
-            android:exported="false" />
 
 
         <service

@@ -6,11 +6,16 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 
@@ -19,6 +24,11 @@ class FiverrLauncherService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var isRunning = false
     private val launchInterval = 5000L
+
+    // Screen wake-lock components
+    private var windowManager: WindowManager? = null
+    private var overlayView: View? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private val launchRunnable = object : Runnable {
         override fun run() {
@@ -43,33 +53,91 @@ class FiverrLauncherService : Service() {
 
                 Log.d("nvm", "FiverrLauncherService started")
 
-                // Start the KeepScreenOnService to maintain screen awake with overlay
-                try {
-                    val keepScreenIntent = Intent(this, KeepScreenOnService::class.java)
-                    startService(keepScreenIntent)
-                    Log.d("nvm", "KeepScreenOnService started successfully")
-                } catch (e: Exception) {
-                    Log.e("nvm", "Failed to start KeepScreenOnService: ${e.message}", e)
-                }
+                // Create overlay and acquire wake lock
+                createOverlay()
+                acquireWakeLock()
             }
             ACTION_STOP -> {
                 isRunning = false
                 handler.removeCallbacks(launchRunnable)
+
+                // Remove overlay and release wake lock
+                removeOverlay()
+                releaseWakeLock()
+
                 stopForegroundServiceInternal()
-
                 Log.d("nvm", "FiverrLauncherService stopped")
-
-                // Stop the KeepScreenOnService
-                try {
-                    val keepScreenIntent = Intent(this, KeepScreenOnService::class.java)
-                    stopService(keepScreenIntent)
-                    Log.d("nvm", "KeepScreenOnService stopped")
-                } catch (e: Exception) {
-                    Log.e("nvm", "Failed to stop KeepScreenOnService: ${e.message}", e)
-                }
             }
         }
         return START_STICKY
+    }
+
+    private fun createOverlay() {
+        try {
+            windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            overlayView = View(this)
+
+            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+            }
+
+            val params = WindowManager.LayoutParams(
+                1, // 1 pixel width
+                1, // 1 pixel height
+                layoutType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = 0
+                y = 0
+            }
+
+            windowManager?.addView(overlayView, params)
+            Log.d("nvm", "Overlay window created with FLAG_KEEP_SCREEN_ON")
+        } catch (e: Exception) {
+            Log.e("nvm", "Error creating overlay: ${e.message}", e)
+        }
+    }
+
+    private fun removeOverlay() {
+        try {
+            if (overlayView != null) {
+                windowManager?.removeView(overlayView)
+                overlayView = null
+            }
+        } catch (e: Exception) {
+            Log.e("nvm", "Error removing overlay: ${e.message}")
+        }
+    }
+
+    private fun acquireWakeLock() {
+        try {
+            val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.SCREEN_DIM_WAKE_LOCK,
+                "FiverrSupport:KeepScreenOnWakeLock"
+            )
+            wakeLock?.acquire(10 * 60 * 60 * 1000L) // 10 hour timeout
+            Log.d("nvm", "WakeLock acquired")
+        } catch (e: Exception) {
+            Log.e("nvm", "Error acquiring wake lock: ${e.message}", e)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.release()
+            wakeLock = null
+        } catch (e: Exception) {
+            Log.e("nvm", "Error releasing wake lock: ${e.message}")
+        }
     }
 
     private fun startForegroundServiceInternal() {
