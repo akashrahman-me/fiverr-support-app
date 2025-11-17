@@ -380,6 +380,9 @@ fun Root(modifier: Modifier = Modifier) {
                 }
             )
 
+            Spacer(modifier = Modifier.padding(4.dp))
+
+
             // Divider between permissions and features
             Spacer(modifier = Modifier.padding(12.dp))
             HorizontalDivider(

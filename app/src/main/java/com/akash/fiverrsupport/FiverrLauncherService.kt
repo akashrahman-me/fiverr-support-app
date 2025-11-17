@@ -7,10 +7,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.app.job.JobInfo
-import android.app.job.JobScheduler
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -21,39 +22,124 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.VibrationAttributes
+import android.os.Vibrator
 import android.util.Log
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 
 class FiverrLauncherService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var isRunning = false
+    private var isPaused = false // New: Track if service is paused due to user interaction
     private var launchInterval = 20000L // Default 20 seconds
+    private var lastUserInteractionTime = 0L
+    private val idleTimeout = 60000L // 1 minute = 60 seconds
 
     // Screen wake-lock components
     private var windowManager: WindowManager? = null
     private var overlayView: CircularTimerView? = null
+    private var touchDetectorView: TouchDetectorView? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var vibrator: Vibrator? = null
+    private var isScreenOn = true
+    private var isVibrationServiceRunning = false // Track if we intentionally started vibration
 
     private var nextLaunchTime = 0L
 
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+
+        // Initialize vibrator (modern API)
+        vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            getSystemService(Vibrator::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(VIBRATOR_SERVICE) as Vibrator
+        }
+
+        // Register screen state receiver
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        registerReceiver(screenStateReceiver, filter)
+
+        // Check current screen state
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        isScreenOn = powerManager.isInteractive
+
+        Log.d("nvm", "Service created, screen is ${if (isScreenOn) "ON" else "OFF"}")
+    }
+
+    // Screen state receiver to detect screen on/off
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    isScreenOn = false
+                    Log.d("nvm", "Screen turned OFF - starting vibration alert")
+                    startVibrationAlert()
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    // Only stop vibration if user actually unlocked the screen
+                    // Don't stop if it's just our wake lock turning screen on
+                    val keyguardManager = getSystemService(KEYGUARD_SERVICE) as android.app.KeyguardManager
+                    val isLocked = keyguardManager.isKeyguardLocked
+
+                    Log.d("nvm", "Screen turned ON - isLocked: $isLocked, isVibrationServiceRunning: $isVibrationServiceRunning")
+
+                    if (!isLocked && isVibrationServiceRunning) {
+                        // User actually unlocked the screen
+                        isScreenOn = true
+                        Log.d("nvm", "User unlocked screen - stopping vibration alert")
+                        stopVibrationAlert()
+                    } else if (!isLocked && !isVibrationServiceRunning) {
+                        // User unlocked but vibration not running
+                        isScreenOn = true
+                    } else {
+                        // Screen on but still locked (wake lock effect)
+                        Log.d("nvm", "Screen on but still locked - keeping vibration running")
+                    }
+                }
+            }
+        }
+    }
+
     private val launchRunnable = object : Runnable {
         override fun run() {
-            if (isRunning) {
+            if (isRunning && !isPaused) {
                 launchFiverrApp()
                 nextLaunchTime = System.currentTimeMillis() + launchInterval
+            }
+            if (isRunning) {
                 handler.postDelayed(this, launchInterval)
             }
         }
     }
 
-    override fun onCreate() {
-        super.onCreate()
-        createNotificationChannel()
+    // Check if user has been idle for 1 minute, then auto-resume
+    private val idleCheckerRunnable = object : Runnable {
+        override fun run() {
+            if (isRunning && isPaused) {
+                val idleTime = System.currentTimeMillis() - lastUserInteractionTime
+                if (idleTime >= idleTimeout) {
+                    Log.d("nvm", "User idle for 1 minute - auto-resuming service")
+                    resumeService()
+                }
+            }
+            if (isRunning) {
+                handler.postDelayed(this, 1000) // Check every second
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -73,6 +159,12 @@ class FiverrLauncherService : Service() {
                 createOverlay()
                 acquireWakeLock()
                 Log.d("nvm", "Service restored successfully")
+
+                // Check if screen is off and start vibration if needed
+                if (!isScreenOn) {
+                    Log.d("nvm", "Service restored with screen OFF - starting vibration alert")
+                    startVibrationAlert()
+                }
             } else {
                 Log.d("nvm", "Service was disabled by user, not restoring")
                 stopSelf()
@@ -103,6 +195,12 @@ class FiverrLauncherService : Service() {
                 // Create overlay and acquire wake lock
                 createOverlay()
                 acquireWakeLock()
+
+                // Check if screen is off and start vibration if needed
+                if (!isScreenOn) {
+                    Log.d("nvm", "Service started with screen OFF - starting vibration alert")
+                    startVibrationAlert()
+                }
             }
             ACTION_STOP -> {
                 isRunning = false
@@ -116,7 +214,8 @@ class FiverrLauncherService : Service() {
 
                 Log.d("nvm", "Saved state: service_enabled=false")
 
-                // Remove overlay and release wake lock
+                // Stop vibration, remove overlay and release wake lock
+                stopVibrationAlert()
                 removeOverlay()
                 releaseWakeLock()
 
@@ -150,7 +249,6 @@ class FiverrLauncherService : Service() {
     private fun createOverlay() {
         try {
             windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-            overlayView = CircularTimerView(this)
 
             val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -159,6 +257,27 @@ class FiverrLauncherService : Service() {
                 WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
             }
 
+            // Create touch detector overlay (full screen, invisible)
+            touchDetectorView = TouchDetectorView(this) { userTouched() }
+            val touchParams = WindowManager.LayoutParams(
+                1, // Very small, just 1 pixel
+                1, // Very small, just 1 pixel
+                layoutType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                        WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = 0
+                y = 0
+            }
+            windowManager?.addView(touchDetectorView, touchParams)
+            Log.d("nvm", "Touch detector overlay created")
+
+            // Create circular timer overlay
+            overlayView = CircularTimerView(this)
             val overlaySize = 120 // 120dp for circular timer
             val params = WindowManager.LayoutParams(
                 overlaySize,
@@ -185,6 +304,10 @@ class FiverrLauncherService : Service() {
 
     private fun removeOverlay() {
         try {
+            if (touchDetectorView != null) {
+                windowManager?.removeView(touchDetectorView)
+                touchDetectorView = null
+            }
             if (overlayView != null) {
                 overlayView?.stopTimer()
                 windowManager?.removeView(overlayView)
@@ -273,6 +396,65 @@ class FiverrLauncherService : Service() {
         }
     }
 
+    // Called when user touches the screen
+    private fun userTouched() {
+        lastUserInteractionTime = System.currentTimeMillis()
+
+        if (!isPaused) {
+            pauseService()
+        }
+    }
+
+    // Pause the service (stop opening Fiverr, turn timer red)
+    private fun pauseService() {
+        isPaused = true
+        overlayView?.setPaused(true) // Turn timer red
+        handler.post(idleCheckerRunnable) // Start idle checker
+        Log.d("nvm", "Service paused due to user interaction")
+    }
+
+    // Resume the service (start opening Fiverr, turn timer green)
+    private fun resumeService() {
+        isPaused = false
+        overlayView?.setPaused(false) // Turn timer green
+        overlayView?.resetTimer() // Reset timer to start fresh
+        handler.removeCallbacks(idleCheckerRunnable) // Stop idle checker
+        Log.d("nvm", "Service resumed")
+    }
+
+    // Helper to start both vibration engines
+    private fun startVibrationAlert() {
+        try {
+            Log.d("nvm", "startVibrationAlert() called - isRunning: $isRunning, isScreenOn: $isScreenOn")
+            if (isRunning) {
+                isVibrationServiceRunning = true // Set flag BEFORE starting service
+                val serviceIntent = Intent(this, VibrationService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
+                Log.d("nvm", "Started VibrationService via ${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) "startForegroundService" else "startService"}")
+            } else {
+                Log.w("nvm", "Cannot start VibrationService - isRunning is false")
+            }
+        } catch (e: Exception) {
+            Log.e("nvm", "Failed to start VibrationService: ${e.message}", e)
+            isVibrationServiceRunning = false
+        }
+    }
+
+    // Helper to stop both vibration engines
+    private fun stopVibrationAlert() {
+        try {
+            isVibrationServiceRunning = false // Clear flag BEFORE stopping service
+            stopService(Intent(this, VibrationService::class.java))
+            Log.d("nvm", "Stopped VibrationService")
+        } catch (e: Exception) {
+            Log.e("nvm", "Failed to stop VibrationService: ${e.message}")
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -289,6 +471,14 @@ class FiverrLauncherService : Service() {
         handler.removeCallbacks(launchRunnable)
         removeOverlay()
         releaseWakeLock()
+        stopVibrationAlert()
+
+        // Unregister screen state receiver
+        try {
+            unregisterReceiver(screenStateReceiver)
+        } catch (e: Exception) {
+            Log.e("nvm", "Error unregistering receiver: ${e.message}")
+        }
 
         // Check if service was enabled by user
         val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
@@ -297,7 +487,7 @@ class FiverrLauncherService : Service() {
         if (wasEnabled) {
             Log.d("nvm", "Service destroyed but was enabled - scheduling restart")
 
-            // Method 1: Use AlarmManager for reliable restart on Android 13+
+            // Use AlarmManager for reliable restart on Android 13+
             try {
                 val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
                 val restartIntent = Intent(this, ServiceRestartReceiver::class.java).apply {
@@ -324,29 +514,6 @@ class FiverrLauncherService : Service() {
             } catch (e: Exception) {
                 Log.e("nvm", "Failed to schedule AlarmManager: ${e.message}")
             }
-
-            // Method 2: Use JobScheduler as backup (more reliable for process kills)
-            try {
-                val jobScheduler = getSystemService(JOB_SCHEDULER_SERVICE) as JobScheduler
-                val componentName = ComponentName(
-                    this.packageName,
-                    "com.akash.fiverrsupport.ServiceRestartJobService"
-                )
-                val jobInfo = JobInfo.Builder(JOB_ID, componentName)
-                    .setMinimumLatency(2000) // Wait 2 seconds
-                    .setOverrideDeadline(5000) // Must run within 5 seconds
-                    .setPersisted(true) // Survive reboots
-                    .build()
-
-                val result = jobScheduler.schedule(jobInfo)
-                if (result == JobScheduler.RESULT_SUCCESS) {
-                    Log.d("nvm", "Restart scheduled via JobScheduler (backup)")
-                } else {
-                    Log.e("nvm", "Failed to schedule JobScheduler")
-                }
-            } catch (e: Exception) {
-                Log.e("nvm", "Failed to schedule JobScheduler: ${e.message}")
-            }
         }
 
         Log.d("nvm", "FiverrLauncherService destroyed")
@@ -359,7 +526,9 @@ class FiverrLauncherService : Service() {
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_UPDATE_INTERVAL = "ACTION_UPDATE_INTERVAL"
         const val EXTRA_INTERVAL = "EXTRA_INTERVAL"
-        const val JOB_ID = 1001
+        const val VIBRATION_CHANNEL_ID = "FiverrSupportVibrationChannel"
+        const val VIBRATION_NOTIFICATION_ID = 2
+        const val VIBRATION_NOTIFICATION_ID_ALT = 3
     }
 }
 
@@ -371,7 +540,9 @@ class CircularTimerView(context: android.content.Context) : View(context) {
     private val handler = Handler(Looper.getMainLooper())
     private var totalDuration = 20000L
     private var startTime = 0L
+    private var pausedTime = 0L
     private var isRunning = false
+    private var isPaused = false
 
     private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#80000000") // Semi-transparent black
@@ -379,7 +550,14 @@ class CircularTimerView(context: android.content.Context) : View(context) {
     }
 
     private val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#4CAF50") // Green
+        color = Color.parseColor("#4CAF50") // Green (active)
+        style = Paint.Style.STROKE
+        strokeWidth = 8f
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val pausedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#F44336") // Red (paused)
         style = Paint.Style.STROKE
         strokeWidth = 8f
         strokeCap = Paint.Cap.ROUND
@@ -396,9 +574,12 @@ class CircularTimerView(context: android.content.Context) : View(context) {
 
     private val updateRunnable = object : Runnable {
         override fun run() {
-            if (isRunning) {
+            if (isRunning && !isPaused) {
                 invalidate() // Trigger redraw
                 handler.postDelayed(this, 50) // Update every 50ms for smooth animation
+            } else if (isPaused) {
+                invalidate() // Still redraw to show paused state
+                handler.postDelayed(this, 50)
             }
         }
     }
@@ -407,12 +588,34 @@ class CircularTimerView(context: android.content.Context) : View(context) {
         totalDuration = duration
         startTime = System.currentTimeMillis()
         isRunning = true
+        isPaused = false
         handler.post(updateRunnable)
     }
 
     fun stopTimer() {
         isRunning = false
+        isPaused = false
         handler.removeCallbacks(updateRunnable)
+    }
+
+    fun setPaused(paused: Boolean) {
+        if (paused && !isPaused) {
+            // Entering pause - save current time
+            pausedTime = System.currentTimeMillis() - startTime
+            isPaused = true
+            Log.d("nvm", "Timer paused at ${pausedTime}ms")
+        } else if (!paused && isPaused) {
+            // Exiting pause - not used here, use resetTimer instead
+            isPaused = false
+        }
+        invalidate()
+    }
+
+    fun resetTimer() {
+        startTime = System.currentTimeMillis()
+        pausedTime = 0L
+        isPaused = false
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -428,7 +631,11 @@ class CircularTimerView(context: android.content.Context) : View(context) {
         canvas.drawCircle(centerX, centerY, radius, backgroundPaint)
 
         // Calculate remaining time
-        val elapsed = System.currentTimeMillis() - startTime
+        val elapsed = if (isPaused) {
+            pausedTime // Use frozen time when paused
+        } else {
+            System.currentTimeMillis() - startTime
+        }
         val remaining = (totalDuration - elapsed).coerceAtLeast(0)
         val progress = (remaining.toFloat() / totalDuration) * 360f
 
@@ -440,18 +647,38 @@ class CircularTimerView(context: android.content.Context) : View(context) {
             centerY + radius - 5
         )
 
-        // Draw arc from top (270 degrees) clockwise
-        canvas.drawArc(rectF, -90f, progress, false, progressPaint)
+        // Use red paint if paused, green if active
+        val paint = if (isPaused) pausedPaint else progressPaint
+        canvas.drawArc(rectF, -90f, progress, false, paint)
 
         // Draw remaining time text
         val seconds = (remaining / 1000).toInt()
-        val text = "${seconds}s"
+        val text = if (isPaused) "⏸ ${seconds}s" else "${seconds}s"
         canvas.drawText(text, centerX, centerY + 8, textPaint)
 
-        // Reset timer when it reaches 0
-        if (remaining <= 0) {
+        // Reset timer when it reaches 0 (only if not paused)
+        if (remaining <= 0 && !isPaused) {
             startTime = System.currentTimeMillis()
         }
     }
 }
 
+/**
+ * Invisible tiny overlay to detect user touches via FLAG_WATCH_OUTSIDE_TOUCH
+ */
+class TouchDetectorView(
+    context: Context,
+    private val onTouch: () -> Unit
+) : View(context) {
+
+    override fun onTouchEvent(event: MotionEvent?): Boolean {
+        // This will be called for outside touches due to FLAG_WATCH_OUTSIDE_TOUCH
+        when (event?.action) {
+            MotionEvent.ACTION_OUTSIDE -> {
+                // User touched outside this tiny 1x1 view (anywhere on screen)
+                onTouch()
+            }
+        }
+        return false // Don't consume the touch event - let it pass through
+    }
+}
