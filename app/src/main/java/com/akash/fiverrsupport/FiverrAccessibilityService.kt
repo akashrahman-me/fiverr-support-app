@@ -4,9 +4,12 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
 import android.graphics.Path
-import android.os.Build
+import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 
 /**
  * Singleton holder for tracking the current foreground app package
@@ -152,19 +155,146 @@ class FiverrAccessibilityService : AccessibilityService() {
         try {
             Log.d("nvm", "Attempting to clear Fiverr from recents")
 
-            // Method: Press back button to close Fiverr, then it will be in background
-            // When we launch it again, it will start fresh
-            val backPressed = performGlobalAction(GLOBAL_ACTION_BACK)
+            // Step 1: Open recents screen
+            val recentsOpened = performGlobalAction(GLOBAL_ACTION_RECENTS)
 
-            if (backPressed) {
-                Log.d("nvm", "Pressed back to close Fiverr app")
-                callback(true)
-            } else {
-                Log.w("nvm", "Failed to press back button")
+            if (!recentsOpened) {
+                Log.w("nvm", "Failed to open recents screen")
+                callback(false)
+                return
+            }
+
+            Log.d("nvm", "Opened recents screen, waiting for UI to settle")
+
+            // Step 2: Wait for recents UI to fully load
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    // Step 3: Find and dismiss Fiverr from recents
+                    val rootNode = rootInActiveWindow
+                    if (rootNode == null) {
+                        Log.w("nvm", "No root node found in recents screen")
+                        // Close recents and return
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        callback(false)
+                        return@postDelayed
+                    }
+
+                    // Find Fiverr app card in recents
+                    val fiverrCard = findFiverrInRecents(rootNode)
+
+                    if (fiverrCard != null) {
+                        Log.d("nvm", "Found Fiverr card in recents, performing swipe to dismiss")
+
+                        // Get card bounds for swipe gesture
+                        val rect = Rect()
+                        fiverrCard.getBoundsInScreen(rect)
+
+                        // Swipe up to dismiss (center of card, swipe up)
+                        val startX = rect.centerX().toFloat()
+                        val startY = rect.centerY().toFloat()
+                        val endY = 0f // Swipe to top
+
+                        performSwipeGesture(startX, startY, startX, endY) { success ->
+                            // Don't recycle here - will be recycled at the end
+                            if (success) {
+                                Log.d("nvm", "Successfully cleared Fiverr from recents")
+                                // Close recents screen
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    performGlobalAction(GLOBAL_ACTION_BACK)
+                                }, 200)
+                                callback(true)
+                            } else {
+                                Log.w("nvm", "Failed to swipe Fiverr card")
+                                performGlobalAction(GLOBAL_ACTION_BACK)
+                                callback(false)
+                            }
+                        }
+                    } else {
+                        Log.d("nvm", "Fiverr not found in recents (already cleared or not opened)")
+                        // Close recents
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        callback(true) // Consider success if already not in recents
+                    }
+
+                } catch (e: Exception) {
+                    Log.e("nvm", "Error finding Fiverr in recents: ${e.message}", e)
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    callback(false)
+                }
+            }, 800) // Wait for recents animation to complete
+
+        } catch (e: Exception) {
+            Log.e("nvm", "Error clearing Fiverr from recents: ${e.message}", e)
+            callback(false)
+        }
+    }
+
+    /**
+     * Find Fiverr app card in recents screen
+     */
+    private fun findFiverrInRecents(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        // Check if this node or its children contain "Fiverr" or package name
+        if (node.packageName?.toString()?.contains("fiverr", ignoreCase = true) == true) {
+            // Found a node related to Fiverr
+            // Try to find the parent card that can be dismissed
+            var parent = node.parent
+            var depth = 0
+            while (parent != null && depth < 5) {
+                if (parent.isClickable || parent.isDismissable) {
+                    return parent
+                }
+                parent = parent.parent
+                depth++
+            }
+            return node
+        }
+
+        // Recursively search children
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val result = findFiverrInRecents(child)
+            if (result != null) {
+                child.recycle()
+                return result
+            }
+            child.recycle()
+        }
+
+        return null
+    }
+
+    /**
+     * Perform a swipe gesture
+     */
+    private fun performSwipeGesture(startX: Float, startY: Float, endX: Float, endY: Float, callback: (Boolean) -> Unit) {
+        try {
+            val path = Path()
+            path.moveTo(startX, startY)
+            path.lineTo(endX, endY)
+
+            val gestureBuilder = GestureDescription.Builder()
+            val gestureStroke = GestureDescription.StrokeDescription(path, 0, 250) // 250ms swipe
+            gestureBuilder.addStroke(gestureStroke)
+
+            val result = dispatchGesture(
+                gestureBuilder.build(),
+                object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        callback(true)
+                    }
+
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        callback(false)
+                    }
+                },
+                null
+            )
+
+            if (!result) {
                 callback(false)
             }
         } catch (e: Exception) {
-            Log.e("nvm", "Error clearing Fiverr from recents: ${e.message}", e)
+            Log.e("nvm", "Error performing swipe gesture: ${e.message}", e)
             callback(false)
         }
     }

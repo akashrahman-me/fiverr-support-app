@@ -79,6 +79,7 @@ class FiverrLauncherService : Service() {
     private var connectivityManager: android.net.ConnectivityManager? = null
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
     private var hasInternet = true // Track internet connectivity
+    private var isPausedByInternetLoss = false // Track if pause is due to internet loss
 
     override fun onCreate() {
         super.onCreate()
@@ -172,22 +173,30 @@ class FiverrLauncherService : Service() {
                         }
                     } else if (isPaused && isRunning && lastUserInteractionTime == 0L) {
                         // Service was paused by screen lock (not touch), so resume instantly
-                        // But still check for media playback and calls
-                        val mediaPlaying = isMediaPlaying()
-                        val inCall = isInCall()
-                        if (mediaPlaying) {
-                            Log.d("nvm", "Screen unlocked but media is playing - NOT resuming, starting idle checker")
-                            // Start idle checker to wait for media to stop
-                            lastUserInteractionTime = System.currentTimeMillis()
-                            handler.post(idleCheckerRunnable)
-                        } else if (inCall) {
-                            Log.d("nvm", "Screen unlocked but in a call - NOT resuming, starting idle checker")
-                            // Start idle checker to wait for call to end
-                            lastUserInteractionTime = System.currentTimeMillis()
-                            handler.post(idleCheckerRunnable)
+                        // But still check for media playback, calls, and internet
+
+                        // Don't resume if paused by internet loss - wait for network callback
+                        if (isPausedByInternetLoss) {
+                            Log.d("nvm", "Screen unlocked but service is paused by internet loss - NOT resuming (waiting for network)")
                         } else {
-                            Log.d("nvm", "Auto-resuming service instantly after unlock (paused by screen lock)")
-                            resumeService()
+                            val mediaPlaying = isMediaPlaying()
+                            val inCall = isInCall()
+                            if (!hasInternet) {
+                                Log.d("nvm", "Screen unlocked but no internet - NOT resuming (waiting for network)")
+                            } else if (mediaPlaying) {
+                                Log.d("nvm", "Screen unlocked but media is playing - NOT resuming, starting idle checker")
+                                // Start idle checker to wait for media to stop
+                                lastUserInteractionTime = System.currentTimeMillis()
+                                handler.post(idleCheckerRunnable)
+                            } else if (inCall) {
+                                Log.d("nvm", "Screen unlocked but in a call - NOT resuming, starting idle checker")
+                                // Start idle checker to wait for call to end
+                                lastUserInteractionTime = System.currentTimeMillis()
+                                handler.post(idleCheckerRunnable)
+                            } else {
+                                Log.d("nvm", "Auto-resuming service instantly after unlock (paused by screen lock)")
+                                resumeService()
+                            }
                         }
                     } else {
                         Log.d("nvm", "Resume not needed (isPaused=$isPaused, isRunning=$isRunning)")
@@ -227,20 +236,28 @@ class FiverrLauncherService : Service() {
                                     Log.d("nvm", "Not resuming yet (via SCREEN_ON) - only ${idleTime}ms idle, need ${idleTimeout}ms")
                                 }
                             } else if (isPaused && isRunning && lastUserInteractionTime == 0L) {
-                                // Service was paused by screen lock (not touch), check media and calls
-                                val mediaPlaying = isMediaPlaying()
-                                val inCall = isInCall()
-                                if (mediaPlaying) {
-                                    Log.d("nvm", "Screen unlocked (via SCREEN_ON) but media is playing - NOT resuming, starting idle checker")
-                                    lastUserInteractionTime = System.currentTimeMillis()
-                                    handler.post(idleCheckerRunnable)
-                                } else if (inCall) {
-                                    Log.d("nvm", "Screen unlocked (via SCREEN_ON) but in a call - NOT resuming, starting idle checker")
-                                    lastUserInteractionTime = System.currentTimeMillis()
-                                    handler.post(idleCheckerRunnable)
+                                // Service was paused by screen lock (not touch), check media, calls, and internet
+
+                                // Don't resume if paused by internet loss - wait for network callback
+                                if (isPausedByInternetLoss) {
+                                    Log.d("nvm", "Screen unlocked (via SCREEN_ON) but service is paused by internet loss - NOT resuming (waiting for network)")
                                 } else {
-                                    Log.d("nvm", "Auto-resuming service instantly after unlock (via SCREEN_ON, paused by screen lock)")
-                                    resumeService()
+                                    val mediaPlaying = isMediaPlaying()
+                                    val inCall = isInCall()
+                                    if (!hasInternet) {
+                                        Log.d("nvm", "Screen unlocked (via SCREEN_ON) but no internet - NOT resuming (waiting for network)")
+                                    } else if (mediaPlaying) {
+                                        Log.d("nvm", "Screen unlocked (via SCREEN_ON) but media is playing - NOT resuming, starting idle checker")
+                                        lastUserInteractionTime = System.currentTimeMillis()
+                                        handler.post(idleCheckerRunnable)
+                                    } else if (inCall) {
+                                        Log.d("nvm", "Screen unlocked (via SCREEN_ON) but in a call - NOT resuming, starting idle checker")
+                                        lastUserInteractionTime = System.currentTimeMillis()
+                                        handler.post(idleCheckerRunnable)
+                                    } else {
+                                        Log.d("nvm", "Auto-resuming service instantly after unlock (via SCREEN_ON, paused by screen lock)")
+                                        resumeService()
+                                    }
                                 }
                             }
                         } else if (isLocked) {
@@ -276,31 +293,36 @@ class FiverrLauncherService : Service() {
         }
     }
 
-    // Check if user has been idle for 1 minute, then auto-resume (unless media is playing)
+    // Check if user has been idle for 1 minute, then auto-resume (unless media is playing or in call)
+    // Note: Internet connectivity is handled separately by network callback, not here
     private val idleCheckerRunnable = object : Runnable {
         override fun run() {
             if (isRunning && isPaused) {
+                // Do not resume while offline or if pause reason is internet loss
+                if (isPausedByInternetLoss || !hasInternet) {
+                    handler.postDelayed(this, 1000)
+                    return
+                }
+
                 val idleTime = System.currentTimeMillis() - lastUserInteractionTime
 
-                // Check if media is playing or user is in a call or no internet
+                // Only check media and call state - internet is handled by network callback
                 val mediaPlaying = isMediaPlaying()
                 val inCall = isInCall()
-                val noInternet = !hasInternet
 
                 if (idleTime >= idleTimeout) {
                     if (mediaPlaying) {
                         Log.d("nvm", "User idle for 1 minute but media is playing - NOT resuming")
                     } else if (inCall) {
                         Log.d("nvm", "User idle for 1 minute but in a call - NOT resuming")
-                    } else if (noInternet) {
-                        Log.d("nvm", "User idle for 1 minute but no internet connection - NOT resuming")
                     } else {
-                        Log.d("nvm", "User idle for 1 minute, no media playing, no call, internet available - auto-resuming service")
+                        Log.d("nvm", "User idle for 1 minute, no media playing, no call - auto-resuming service")
                         resumeService()
                     }
                 }
             }
-            if (isRunning) {
+            // Continue checking only if service is still running and paused
+            if (isRunning && isPaused) {
                 handler.postDelayed(this, 1000) // Check every second
             }
         }
@@ -663,6 +685,12 @@ class FiverrLauncherService : Service() {
             return
         }
 
+        // If we're paused due to internet loss (or currently offline), ignore touches
+        if (isPausedByInternetLoss || !hasInternet) {
+            Log.d("nvm", "Touch detected while offline/internet-paused - ignoring user touch")
+            return
+        }
+
         Log.d("nvm", "User touch detected - pausing service")
         lastUserInteractionTime = System.currentTimeMillis()
 
@@ -674,6 +702,10 @@ class FiverrLauncherService : Service() {
     // Pause the service (stop opening Fiverr, turn timer red)
     private fun pauseService(startIdleChecker: Boolean = true, shouldRestoreBrightness: Boolean = true) {
         isPaused = true
+
+        // Track if this pause is due to internet loss
+        isPausedByInternetLoss = !startIdleChecker && !shouldRestoreBrightness
+
         overlayView?.setPaused(true) // Turn timer red
 
         // Remove pending launchRunnable callbacks to prevent them from rescheduling
@@ -692,12 +724,12 @@ class FiverrLauncherService : Service() {
             handler.post(idleCheckerRunnable)
         }
 
-        Log.d("nvm", "Service paused ${if (startIdleChecker) "with idle checker" else "without idle checker"}")
+        Log.d("nvm", "Service paused ${if (startIdleChecker) "with idle checker" else "without idle checker"} - isPausedByInternetLoss=$isPausedByInternetLoss")
     }
 
     // Resume the service (start opening Fiverr, turn timer green)
     private fun resumeService() {
-        Log.d("nvm", "resumeService() called - BEFORE: isRunning=$isRunning, isPaused=$isPaused")
+        Log.d("nvm", "resumeService() called - BEFORE: isRunning=$isRunning, isPaused=$isPaused, isPausedByInternetLoss=$isPausedByInternetLoss")
 
         // Calculate remaining time from when it was paused
         val pausedTimeMs = overlayView?.getPausedTime() ?: 0L
@@ -710,6 +742,7 @@ class FiverrLauncherService : Service() {
         overlayView?.resumeTimer() // Resume from paused position (not reset!) and unpause
 
         isPaused = false
+        isPausedByInternetLoss = false // Clear internet loss flag
         Log.d("nvm", "resumeService() - AFTER isPaused=false: isRunning=$isRunning, isPaused=$isPaused")
 
         handler.removeCallbacks(idleCheckerRunnable) // Stop idle checker
@@ -827,30 +860,35 @@ class FiverrLauncherService : Service() {
                             // Clear Fiverr from recents to ensure fresh start after reconnection
                             val accessibilityService = FiverrAccessibilityService.getInstance()
                             if (accessibilityService != null) {
-                                // Only clear if Fiverr is currently in foreground
-                                if (ForegroundAppHolder.currentPackage == "com.fiverr.fiverr") {
-                                    handler.postDelayed({
-                                        accessibilityService.clearFiverrFromRecents { success ->
-                                            if (success) {
-                                                Log.d("nvm", "Successfully cleared Fiverr from recents after internet reconnection")
-                                                // Wait a moment before the idle checker will resume and relaunch Fiverr
-                                            } else {
-                                                Log.w("nvm", "Failed to clear Fiverr from recents")
-                                            }
+                                // Always clear Fiverr, regardless of current foreground app
+                                handler.postDelayed({
+                                    accessibilityService.clearFiverrFromRecents { success ->
+                                        if (success) {
+                                            Log.d("nvm", "Successfully cleared Fiverr from recents after internet reconnection")
+                                        } else {
+                                            Log.w("nvm", "Failed to clear Fiverr from recents (may not be running)")
                                         }
-                                    }, 500) // Small delay to ensure network is stable
-                                } else {
-                                    Log.d("nvm", "Fiverr not in foreground, will launch fresh when service resumes")
-                                }
+
+                                        // Auto-resume service immediately after clearing Fiverr
+                                        if (isPaused && isRunning) {
+                                            Log.d("nvm", "Internet restored - auto-resuming service to launch fresh Fiverr")
+                                            resumeService()
+                                        }
+                                    }
+                                }, 500) // Small delay to ensure network is stable
                             } else {
                                 Log.w("nvm", "Accessibility service not available to clear Fiverr")
+                                // Still resume even if we can't clear
+                                if (isPaused && isRunning) {
+                                    Log.d("nvm", "Internet restored - auto-resuming service")
+                                    resumeService()
+                                }
                             }
-                            // Don't auto-resume here - let idle checker handle it
                         } else {
                             Log.d("nvm", "Internet lost - pausing service")
                             if (!isPaused && isRunning) {
-                                lastUserInteractionTime = System.currentTimeMillis()
-                                pauseService(startIdleChecker = true, shouldRestoreBrightness = false) // Keep brightness low
+                                // Don't start idle checker for internet loss - network callback will auto-resume
+                                pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
                             }
                         }
                     }
@@ -861,8 +899,8 @@ class FiverrLauncherService : Service() {
                     hasInternet = false
                     Log.d("nvm", "Internet lost - pausing service")
                     if (!isPaused && isRunning) {
-                        lastUserInteractionTime = System.currentTimeMillis()
-                        pauseService(startIdleChecker = true, shouldRestoreBrightness = false) // Keep brightness low
+                        // Don't start idle checker for internet loss - network callback will auto-resume
+                        pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
                     }
                 }
             }
@@ -1283,4 +1321,3 @@ class CircularTimerView(context: android.content.Context) : View(context) {
         canvas.drawText(text, centerX, centerY + 8, textPaint)
         }
     }
-
