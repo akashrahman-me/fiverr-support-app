@@ -63,17 +63,14 @@ class FiverrAccessibilityService : AccessibilityService() {
         else if (event?.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
             val packageName = event.packageName?.toString()
 
+            Log.d("nvm", "User scroll detected via accessibility (TYPE_VIEW_SCROLLED) - package: $packageName")
+
             // Only ignore Fiverr scroll if automated gesture is currently running
             if (packageName == "com.fiverr.fiverr" && TouchInteractionCallback.isAutomatedGestureActive) {
                 Log.d("nvm", "Ignoring scroll from Fiverr - automated gesture is active (flag=true)")
             }
             // Detect all other scrolls including user scrolls in Fiverr (when flag is false)
             else {
-                if (packageName == "com.fiverr.fiverr") {
-                    Log.d("nvm", "User scroll detected in Fiverr (flag=${TouchInteractionCallback.isAutomatedGestureActive}) - pausing service")
-                } else {
-                    Log.d("nvm", "User scroll detected via accessibility (TYPE_VIEW_SCROLLED) - package: $packageName")
-                }
                 TouchInteractionCallback.notifyTouch()
             }
         }

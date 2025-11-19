@@ -625,15 +625,33 @@ class FiverrLauncherService : Service() {
 
     private fun launchFiverrApp() {
         try {
+            // Set flag to ignore scroll events during app launch/loading
+            isPerformingAutomatedGesture = true
+            TouchInteractionCallback.isAutomatedGestureActive = true
+            Log.d("nvm", "Starting app launch - touch detection disabled")
+
             val intent = packageManager.getLaunchIntentForPackage("com.fiverr.fiverr")
             if (intent != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                 startActivity(intent)
+
+                // Re-enable touch detection after buffer (app launch + loading scroll events settle)
+                handler.postDelayed({
+                    isPerformingAutomatedGesture = false
+                    TouchInteractionCallback.isAutomatedGestureActive = false
+                    Log.d("nvm", "App launch completed - touch detection re-enabled")
+                }, 2500) // 2.5 seconds buffer for app to load and settle
             } else {
                 Log.w("nvm", "Fiverr app package not found")
+                // Re-enable immediately if launch failed
+                isPerformingAutomatedGesture = false
+                TouchInteractionCallback.isAutomatedGestureActive = false
             }
         } catch (e: Exception) {
             Log.e("nvm", "Error launching Fiverr app: ${e.message}")
+            // Re-enable immediately on error
+            isPerformingAutomatedGesture = false
+            TouchInteractionCallback.isAutomatedGestureActive = false
         }
     }
 
