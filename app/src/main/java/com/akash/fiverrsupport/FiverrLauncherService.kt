@@ -687,17 +687,19 @@ class FiverrLauncherService : Service() {
     private fun resumeService() {
         Log.d("nvm", "resumeService() called - BEFORE: isRunning=$isRunning, isPaused=$isPaused")
 
-        isPaused = false
-
         // Calculate remaining time from when it was paused
         val pausedTimeMs = overlayView?.getPausedTime() ?: 0L
         val remainingTime = (launchInterval - pausedTimeMs).coerceAtLeast(0)
 
         Log.d("nvm", "Service resuming - was paused at ${pausedTimeMs}ms, remaining time: ${remainingTime}ms")
+
+        // IMPORTANT: Call resumeTimer() first - it will handle unpausing internally
+        // Don't call setPaused(false) before resumeTimer() as it breaks the resume logic
+        overlayView?.resumeTimer() // Resume from paused position (not reset!) and unpause
+
+        isPaused = false
         Log.d("nvm", "resumeService() - AFTER isPaused=false: isRunning=$isRunning, isPaused=$isPaused")
 
-        overlayView?.setPaused(false) // Turn timer green
-        overlayView?.resumeTimer() // Resume from paused position (not reset!)
         handler.removeCallbacks(idleCheckerRunnable) // Stop idle checker
 
         // IMPORTANT: Remove ALL pending callbacks before rescheduling
@@ -1123,9 +1125,12 @@ class CircularTimerView(context: android.content.Context) : View(context) {
             startTime = System.currentTimeMillis() - pausedTime
             isPaused = false
             Log.d("nvm", "Timer resumed from ${pausedTime}ms (${(totalDuration - pausedTime) / 1000}s remaining)")
+            // Restart the update runnable to continue animation
+            handler.post(updateRunnable)
         } else {
             // If not paused or no saved time, just unpause
             isPaused = false
+            Log.d("nvm", "Timer resumed but no saved pause time - just unpausing")
         }
         invalidate()
     }
