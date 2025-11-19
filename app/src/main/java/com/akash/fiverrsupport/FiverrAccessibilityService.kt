@@ -2,6 +2,7 @@ package com.akash.fiverrsupport
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.annotation.SuppressLint
 import android.graphics.Path
 import android.os.Build
 import android.util.Log
@@ -32,19 +33,13 @@ object TouchInteractionCallback {
     }
 }
 
+@SuppressLint("AccessibilityPolicy")
 class FiverrAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         Log.d("nvm", "FiverrAccessibilityService connected and ready")
-
-        // Log the current configuration
-        val info = serviceInfo
-        Log.d("nvm", "Accessibility event types: ${info?.eventTypes}")
-        Log.d("nvm", "Accessibility flags: ${info?.flags}")
-        Log.d("nvm", "Click detection enabled: ${(info?.eventTypes ?: 0) and AccessibilityEvent.TYPE_VIEW_CLICKED != 0}")
-        Log.d("nvm", "Scroll detection enabled: ${(info?.eventTypes ?: 0) and AccessibilityEvent.TYPE_VIEW_SCROLLED != 0}")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -70,11 +65,15 @@ class FiverrAccessibilityService : AccessibilityService() {
 
             // Only ignore Fiverr scroll if automated gesture is currently running
             if (packageName == "com.fiverr.fiverr" && TouchInteractionCallback.isAutomatedGestureActive) {
-                Log.d("nvm", "Ignoring scroll from Fiverr - automated gesture is active")
+                Log.d("nvm", "Ignoring scroll from Fiverr - automated gesture is active (flag=true)")
             }
             // Detect all other scrolls including user scrolls in Fiverr (when flag is false)
             else {
-                Log.d("nvm", "User scroll detected via accessibility (TYPE_VIEW_SCROLLED) - package: $packageName")
+                if (packageName == "com.fiverr.fiverr") {
+                    Log.d("nvm", "User scroll detected in Fiverr (flag=${TouchInteractionCallback.isAutomatedGestureActive}) - pausing service")
+                } else {
+                    Log.d("nvm", "User scroll detected via accessibility (TYPE_VIEW_SCROLLED) - package: $packageName")
+                }
                 TouchInteractionCallback.notifyTouch()
             }
         }

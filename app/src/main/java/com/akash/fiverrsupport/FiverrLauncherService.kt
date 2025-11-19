@@ -603,12 +603,12 @@ class FiverrLauncherService : Service() {
                 Log.e("nvm", "Failed to execute pull-down gesture")
             }
 
-            // Re-enable touch detection after a short delay (gesture completion + 500ms buffer)
+            // Re-enable touch detection after buffer (gesture + Fiverr's scroll events settle)
             handler.postDelayed({
                 isPerformingAutomatedGesture = false
                 TouchInteractionCallback.isAutomatedGestureActive = false
                 Log.d("nvm", "Automated gesture completed - touch detection re-enabled")
-            }, 800) // 300ms gesture duration + 500ms buffer
+            }, 1500) // 300ms gesture + 1200ms buffer for Fiverr scroll events to settle
         }
     }
 
