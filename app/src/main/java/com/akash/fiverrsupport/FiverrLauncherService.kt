@@ -75,6 +75,11 @@ class FiverrLauncherService : Service() {
     private var callStateListener: Any? = null // Can be PhoneStateListener or TelephonyCallback
     private var isInCall = false
 
+    // Network connectivity detection
+    private var connectivityManager: android.net.ConnectivityManager? = null
+    private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
+    private var hasInternet = true // Track internet connectivity
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -91,6 +96,9 @@ class FiverrLauncherService : Service() {
 
         // Register call state listener
         registerCallStateListener()
+
+        // Register network connectivity callback
+        registerNetworkCallback()
 
         // Register touch interaction callback from accessibility service
         TouchInteractionCallback.setCallback { userTouched() }
@@ -274,17 +282,20 @@ class FiverrLauncherService : Service() {
             if (isRunning && isPaused) {
                 val idleTime = System.currentTimeMillis() - lastUserInteractionTime
 
-                // Check if media is playing or user is in a call
+                // Check if media is playing or user is in a call or no internet
                 val mediaPlaying = isMediaPlaying()
                 val inCall = isInCall()
+                val noInternet = !hasInternet
 
                 if (idleTime >= idleTimeout) {
                     if (mediaPlaying) {
                         Log.d("nvm", "User idle for 1 minute but media is playing - NOT resuming")
                     } else if (inCall) {
                         Log.d("nvm", "User idle for 1 minute but in a call - NOT resuming")
+                    } else if (noInternet) {
+                        Log.d("nvm", "User idle for 1 minute but no internet connection - NOT resuming")
                     } else {
-                        Log.d("nvm", "User idle for 1 minute, no media playing, no call - auto-resuming service")
+                        Log.d("nvm", "User idle for 1 minute, no media playing, no call, internet available - auto-resuming service")
                         resumeService()
                     }
                 }
@@ -754,6 +765,83 @@ class FiverrLauncherService : Service() {
         }
     }
 
+    // Register network connectivity callback (Android 13+ modern API)
+    private fun registerNetworkCallback() {
+        try {
+            connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+
+            // Check initial connectivity state
+            val activeNetwork = connectivityManager?.activeNetwork
+            val capabilities = connectivityManager?.getNetworkCapabilities(activeNetwork)
+            hasInternet = capabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true &&
+                         capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+
+            Log.d("nvm", "Initial network state: hasInternet = $hasInternet")
+
+            // Create network callback
+            networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    Log.d("nvm", "Network available: $network")
+                    // Don't set hasInternet yet - wait for validation
+                }
+
+                override fun onCapabilitiesChanged(
+                    network: android.net.Network,
+                    capabilities: android.net.NetworkCapabilities
+                ) {
+                    val hasInternetCapability = capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    val isValidated = capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    val newHasInternet = hasInternetCapability && isValidated
+
+                    if (newHasInternet != hasInternet) {
+                        hasInternet = newHasInternet
+                        Log.d("nvm", "Network state changed: hasInternet = $hasInternet")
+
+                        if (hasInternet) {
+                            Log.d("nvm", "Internet connected - service can resume if conditions met")
+                            // Don't auto-resume here - let idle checker handle it
+                        } else {
+                            Log.d("nvm", "Internet lost - pausing service")
+                            if (!isPaused && isRunning) {
+                                lastUserInteractionTime = System.currentTimeMillis()
+                                pauseService()
+                            }
+                        }
+                    }
+                }
+
+                override fun onLost(network: android.net.Network) {
+                    Log.d("nvm", "Network lost: $network")
+                    hasInternet = false
+                    Log.d("nvm", "Internet lost - pausing service")
+                    if (!isPaused && isRunning) {
+                        lastUserInteractionTime = System.currentTimeMillis()
+                        pauseService()
+                    }
+                }
+            }
+
+            // Register the callback
+            connectivityManager?.registerDefaultNetworkCallback(networkCallback!!)
+            Log.d("nvm", "Network callback registered successfully")
+
+        } catch (e: Exception) {
+            Log.e("nvm", "Failed to register network callback: ${e.message}", e)
+        }
+    }
+
+    // Unregister network callback
+    private fun unregisterNetworkCallback() {
+        try {
+            networkCallback?.let {
+                connectivityManager?.unregisterNetworkCallback(it)
+                Log.d("nvm", "Network callback unregistered")
+            }
+        } catch (e: Exception) {
+            Log.e("nvm", "Error unregistering network callback: ${e.message}")
+        }
+    }
+
     // Handle call state changes
     private fun handleCallStateChange(state: Int) {
         when (state) {
@@ -947,6 +1035,9 @@ class FiverrLauncherService : Service() {
         // Unregister touch interaction callback
         TouchInteractionCallback.setCallback(null)
         Log.d("nvm", "Unregistered touch interaction callback")
+
+        // Unregister network callback
+        unregisterNetworkCallback()
 
         // Check if service was enabled by user
         val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
