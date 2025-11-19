@@ -798,7 +798,29 @@ class FiverrLauncherService : Service() {
                         Log.d("nvm", "Network state changed: hasInternet = $hasInternet")
 
                         if (hasInternet) {
-                            Log.d("nvm", "Internet connected - service can resume if conditions met")
+                            Log.d("nvm", "Internet connected - clearing Fiverr from recents for fresh start")
+
+                            // Clear Fiverr from recents to ensure fresh start after reconnection
+                            val accessibilityService = FiverrAccessibilityService.getInstance()
+                            if (accessibilityService != null) {
+                                // Only clear if Fiverr is currently in foreground
+                                if (ForegroundAppHolder.currentPackage == "com.fiverr.fiverr") {
+                                    handler.postDelayed({
+                                        accessibilityService.clearFiverrFromRecents { success ->
+                                            if (success) {
+                                                Log.d("nvm", "Successfully cleared Fiverr from recents after internet reconnection")
+                                                // Wait a moment before the idle checker will resume and relaunch Fiverr
+                                            } else {
+                                                Log.w("nvm", "Failed to clear Fiverr from recents")
+                                            }
+                                        }
+                                    }, 500) // Small delay to ensure network is stable
+                                } else {
+                                    Log.d("nvm", "Fiverr not in foreground, will launch fresh when service resumes")
+                                }
+                            } else {
+                                Log.w("nvm", "Accessibility service not available to clear Fiverr")
+                            }
                             // Don't auto-resume here - let idle checker handle it
                         } else {
                             Log.d("nvm", "Internet lost - pausing service")

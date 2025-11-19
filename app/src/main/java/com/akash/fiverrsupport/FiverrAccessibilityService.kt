@@ -147,6 +147,31 @@ class FiverrAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Clear Fiverr app from recent apps
+     * Opens recents and dismisses Fiverr to ensure fresh start
+     */
+    fun clearFiverrFromRecents(callback: (Boolean) -> Unit) {
+        try {
+            Log.d("nvm", "Attempting to clear Fiverr from recents")
+
+            // Method: Press back button to close Fiverr, then it will be in background
+            // When we launch it again, it will start fresh
+            val backPressed = performGlobalAction(GLOBAL_ACTION_BACK)
+
+            if (backPressed) {
+                Log.d("nvm", "Pressed back to close Fiverr app")
+                callback(true)
+            } else {
+                Log.w("nvm", "Failed to press back button")
+                callback(false)
+            }
+        } catch (e: Exception) {
+            Log.e("nvm", "Error clearing Fiverr from recents: ${e.message}", e)
+            callback(false)
+        }
+    }
+
     companion object {
         private var instance: FiverrAccessibilityService? = null
 
