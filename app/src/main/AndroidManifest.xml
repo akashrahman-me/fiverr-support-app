@@ -82,7 +82,8 @@
         <service
             android:name=".FiverrAccessibilityService"
             android:exported="false"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            tools:ignore="AccessibilityPolicy">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>

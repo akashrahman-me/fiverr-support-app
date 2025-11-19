@@ -58,7 +58,6 @@ class FiverrLauncherService : Service() {
     // Screen wake-lock components
     private var windowManager: WindowManager? = null
     private var overlayView: CircularTimerView? = null
-    private var touchDetectorView: TouchDetectorView? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var vibrator: Vibrator? = null
     private var isScreenOn = true
@@ -81,12 +80,7 @@ class FiverrLauncherService : Service() {
         createNotificationChannel()
 
         // Initialize vibrator (modern API)
-        vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            getSystemService(Vibrator::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            getSystemService(VIBRATOR_SERVICE) as Vibrator
-        }
+        vibrator = getSystemService(Vibrator::class.java)
 
         // Initialize AudioManager for media playback detection
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
@@ -97,6 +91,10 @@ class FiverrLauncherService : Service() {
 
         // Register call state listener
         registerCallStateListener()
+
+        // Register touch interaction callback from accessibility service
+        TouchInteractionCallback.setCallback { userTouched() }
+        Log.d("nvm", "Registered touch interaction callback from accessibility service")
 
         // Register screen state receiver
         val filter = IntentFilter().apply {
@@ -452,25 +450,6 @@ class FiverrLauncherService : Service() {
                 WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
             }
 
-            // Create touch detector overlay (full screen, invisible)
-            touchDetectorView = TouchDetectorView(this) { userTouched() }
-            val touchParams = WindowManager.LayoutParams(
-                1, // Very small, just 1 pixel
-                1, // Very small, just 1 pixel
-                layoutType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                        WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                x = 0
-                y = 0
-            }
-            windowManager?.addView(touchDetectorView, touchParams)
-            Log.d("nvm", "Touch detector overlay created")
-
             // Create circular timer overlay
             overlayView = CircularTimerView(this)
             val overlaySize = 120 // 120dp for circular timer
@@ -499,10 +478,6 @@ class FiverrLauncherService : Service() {
 
     private fun removeOverlay() {
         try {
-            if (touchDetectorView != null) {
-                windowManager?.removeView(touchDetectorView)
-                touchDetectorView = null
-            }
             if (overlayView != null) {
                 overlayView?.stopTimer()
                 windowManager?.removeView(overlayView)
@@ -874,13 +849,6 @@ class FiverrLauncherService : Service() {
                 Log.d("nvm", "Window brightness reduced to 0")
             }
 
-            // Also update touch detector view
-            touchDetectorView?.let { view ->
-                val layoutParams = view.layoutParams as? WindowManager.LayoutParams
-                layoutParams?.screenBrightness = 0f
-                windowManager?.updateViewLayout(view, layoutParams)
-            }
-
             Log.d("nvm", "Brightness reduced to 0 (Settings + Window)")
         } catch (e: Exception) {
             Log.e("nvm", "Error reducing brightness: ${e.message}", e)
@@ -906,12 +874,6 @@ class FiverrLauncherService : Service() {
                     layoutParams?.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
                     windowManager?.updateViewLayout(view, layoutParams)
                     Log.d("nvm", "Window brightness restored to system default")
-                }
-
-                touchDetectorView?.let { view ->
-                    val layoutParams = view.layoutParams as? WindowManager.LayoutParams
-                    layoutParams?.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-                    windowManager?.updateViewLayout(view, layoutParams)
                 }
 
                 Log.d("nvm", "Brightness restored to: $originalBrightness (Settings + Window)")
@@ -979,6 +941,10 @@ class FiverrLauncherService : Service() {
         } catch (e: Exception) {
             Log.e("nvm", "Error unregistering receiver: ${e.message}")
         }
+
+        // Unregister touch interaction callback
+        TouchInteractionCallback.setCallback(null)
+        Log.d("nvm", "Unregistered touch interaction callback")
 
         // Check if service was enabled by user
         val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
@@ -1179,22 +1145,3 @@ class CircularTimerView(context: android.content.Context) : View(context) {
         }
     }
 
-/**
- * Invisible tiny overlay to detect user touches via FLAG_WATCH_OUTSIDE_TOUCH
- */
-class TouchDetectorView(
-    context: Context,
-    private val onTouch: () -> Unit
-) : View(context) {
-
-    override fun onTouchEvent(event: MotionEvent?): Boolean {
-        // This will be called for outside touches due to FLAG_WATCH_OUTSIDE_TOUCH
-        when (event?.action) {
-            MotionEvent.ACTION_OUTSIDE -> {
-                // User touched outside this tiny 1x1 view (anywhere on screen)
-                onTouch()
-            }
-        }
-        return false // Don't consume the touch event - let it pass through
-    }
-}

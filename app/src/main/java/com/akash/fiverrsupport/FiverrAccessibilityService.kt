@@ -14,12 +14,34 @@ object ForegroundAppHolder {
     var currentPackage: String? = null
 }
 
+/**
+ * Callback for system-wide touch detection
+ */
+object TouchInteractionCallback {
+    private var callback: (() -> Unit)? = null
+
+    fun setCallback(onTouch: (() -> Unit)?) {
+        callback = onTouch
+    }
+
+    fun notifyTouch() {
+        callback?.invoke()
+    }
+}
+
 class FiverrAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         Log.d("nvm", "FiverrAccessibilityService connected and ready")
+
+        // Log the current configuration
+        val info = serviceInfo
+        Log.d("nvm", "Accessibility event types: ${info?.eventTypes}")
+        Log.d("nvm", "Accessibility flags: ${info?.flags}")
+        Log.d("nvm", "Click detection enabled: ${(info?.eventTypes ?: 0) and AccessibilityEvent.TYPE_VIEW_CLICKED != 0}")
+        Log.d("nvm", "Scroll detection enabled: ${(info?.eventTypes ?: 0) and AccessibilityEvent.TYPE_VIEW_SCROLLED != 0}")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -29,6 +51,25 @@ class FiverrAccessibilityService : AccessibilityService() {
                 ForegroundAppHolder.currentPackage = packageName
                 Log.d("nvm", "Foreground app changed to: $packageName")
             }
+        }
+
+        // Detect user interactions (clicks, touches) - Works on Android 13+
+        // TYPE_VIEW_CLICKED captures all user taps/clicks including system UI
+        if (event?.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            Log.d("nvm", "User click detected via accessibility (TYPE_VIEW_CLICKED)")
+            TouchInteractionCallback.notifyTouch()
+        }
+
+        // Additional detection: Scrolling events (user swiping)
+        else if (event?.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            Log.d("nvm", "User scroll detected via accessibility (TYPE_VIEW_SCROLLED)")
+            TouchInteractionCallback.notifyTouch()
+        }
+
+        // Additional detection: Touch exploration (accessibility mode)
+        else if (event?.eventType == AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START) {
+            Log.d("nvm", "User touch exploration detected via accessibility")
+            TouchInteractionCallback.notifyTouch()
         }
     }
 
@@ -106,5 +147,3 @@ class FiverrAccessibilityService : AccessibilityService() {
         }
     }
 }
-
-
