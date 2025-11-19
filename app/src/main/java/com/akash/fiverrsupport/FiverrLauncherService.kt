@@ -654,7 +654,7 @@ class FiverrLauncherService : Service() {
     }
 
     // Pause the service (stop opening Fiverr, turn timer red)
-    private fun pauseService(startIdleChecker: Boolean = true) {
+    private fun pauseService(startIdleChecker: Boolean = true, shouldRestoreBrightness: Boolean = true) {
         isPaused = true
         overlayView?.setPaused(true) // Turn timer red
 
@@ -662,10 +662,16 @@ class FiverrLauncherService : Service() {
         handler.removeCallbacks(launchRunnable)
         Log.d("nvm", "Removed pending launchRunnable callbacks when pausing")
 
-        // Restore brightness when paused by touch (not by screen lock)
-        if (startIdleChecker) {
+        // Restore brightness only for user interaction (not for internet loss)
+        if (shouldRestoreBrightness) {
             restoreBrightness()
-            handler.post(idleCheckerRunnable) // Start idle checker only for touch events
+        } else {
+            Log.d("nvm", "Keeping brightness low (paused by internet loss)")
+        }
+
+        // Start idle checker only for touch events
+        if (startIdleChecker) {
+            handler.post(idleCheckerRunnable)
         }
 
         Log.d("nvm", "Service paused ${if (startIdleChecker) "with idle checker" else "without idle checker"}")
@@ -826,7 +832,7 @@ class FiverrLauncherService : Service() {
                             Log.d("nvm", "Internet lost - pausing service")
                             if (!isPaused && isRunning) {
                                 lastUserInteractionTime = System.currentTimeMillis()
-                                pauseService()
+                                pauseService(startIdleChecker = true, shouldRestoreBrightness = false) // Keep brightness low
                             }
                         }
                     }
@@ -838,7 +844,7 @@ class FiverrLauncherService : Service() {
                     Log.d("nvm", "Internet lost - pausing service")
                     if (!isPaused && isRunning) {
                         lastUserInteractionTime = System.currentTimeMillis()
-                        pauseService()
+                        pauseService(startIdleChecker = true, shouldRestoreBrightness = false) // Keep brightness low
                     }
                 }
             }
