@@ -50,7 +50,7 @@ class FiverrLauncherService : Service() {
     private var isPaused = false // New: Track if service is paused due to user interaction
     private var launchInterval = 20000L // Default 20 seconds
     private var lastUserInteractionTime = 0L
-    private val idleTimeout = 60000L // 1 minute = 60 seconds
+    private val idleTimeout = 5000L
 
     // Flag to ignore touch events during automated gestures
     private var isPerformingAutomatedGesture = false
@@ -249,6 +249,8 @@ class FiverrLauncherService : Service() {
 
     private val launchRunnable = object : Runnable {
         override fun run() {
+            Log.d("nvm", "launchRunnable.run() called - isRunning=$isRunning, isPaused=$isPaused")
+
             if (isRunning && !isPaused) {
                 Log.d("nvm", "⏰ Timer reached 0 - Executing action NOW")
                 handleFiverrAction()
@@ -257,9 +259,13 @@ class FiverrLauncherService : Service() {
                 // Reset the timer to restart countdown after action
                 overlayView?.resetTimer()
                 Log.d("nvm", "Timer reset after Fiverr action - countdown restarted")
-            }
-            if (isRunning) {
+
+                // Schedule next action with full interval
                 handler.postDelayed(this, launchInterval)
+                Log.d("nvm", "Next action scheduled in ${launchInterval}ms")
+            } else {
+                Log.w("nvm", "⚠️ launchRunnable skipped execution - isRunning=$isRunning, isPaused=$isPaused")
+                // DO NOT reschedule when paused - wait for resumeService() to schedule with correct remaining time
             }
         }
     }
@@ -664,6 +670,10 @@ class FiverrLauncherService : Service() {
         isPaused = true
         overlayView?.setPaused(true) // Turn timer red
 
+        // Remove pending launchRunnable callbacks to prevent them from rescheduling
+        handler.removeCallbacks(launchRunnable)
+        Log.d("nvm", "Removed pending launchRunnable callbacks when pausing")
+
         // Restore brightness when paused by touch (not by screen lock)
         if (startIdleChecker) {
             restoreBrightness()
@@ -675,15 +685,29 @@ class FiverrLauncherService : Service() {
 
     // Resume the service (start opening Fiverr, turn timer green)
     private fun resumeService() {
+        Log.d("nvm", "resumeService() called - BEFORE: isRunning=$isRunning, isPaused=$isPaused")
+
         isPaused = false
+
+        // Calculate remaining time from when it was paused
+        val pausedTimeMs = overlayView?.getPausedTime() ?: 0L
+        val remainingTime = (launchInterval - pausedTimeMs).coerceAtLeast(0)
+
+        Log.d("nvm", "Service resuming - was paused at ${pausedTimeMs}ms, remaining time: ${remainingTime}ms")
+        Log.d("nvm", "resumeService() - AFTER isPaused=false: isRunning=$isRunning, isPaused=$isPaused")
+
         overlayView?.setPaused(false) // Turn timer green
-        overlayView?.resetTimer() // Reset timer to start fresh
+        overlayView?.resumeTimer() // Resume from paused position (not reset!)
         handler.removeCallbacks(idleCheckerRunnable) // Stop idle checker
 
-        // Restart the handler with the current interval
-        handler.removeCallbacks(launchRunnable) // Remove any existing callbacks
-        handler.postDelayed(launchRunnable, launchInterval) // Schedule next action
-        Log.d("nvm", "Service resumed - handler scheduled to run in ${launchInterval}ms")
+        // IMPORTANT: Remove ALL pending callbacks before rescheduling
+        // This prevents old scheduled callbacks from interfering with the correct remaining time
+        handler.removeCallbacks(launchRunnable)
+        Log.d("nvm", "Removed all pending launchRunnable callbacks before rescheduling")
+
+        // Schedule with the REMAINING time (not full interval)
+        handler.postDelayed(launchRunnable, remainingTime)
+        Log.d("nvm", "Service resumed - handler scheduled to run in ${remainingTime}ms (resumed from pause, not reset)")
 
         // Reduce brightness to 0 when service resumes
         reduceBrightness()
@@ -1080,7 +1104,7 @@ class CircularTimerView(context: android.content.Context) : View(context) {
             isPaused = true
             Log.d("nvm", "Timer paused at ${pausedTime}ms")
         } else if (!paused && isPaused) {
-            // Exiting pause - not used here, use resetTimer instead
+            // Exiting pause - not used here, use resumeTimer instead
             isPaused = false
         }
         invalidate()
@@ -1091,6 +1115,23 @@ class CircularTimerView(context: android.content.Context) : View(context) {
         pausedTime = 0L
         isPaused = false
         invalidate()
+    }
+
+    fun resumeTimer() {
+        // Resume from where it was paused
+        if (isPaused && pausedTime > 0) {
+            startTime = System.currentTimeMillis() - pausedTime
+            isPaused = false
+            Log.d("nvm", "Timer resumed from ${pausedTime}ms (${(totalDuration - pausedTime) / 1000}s remaining)")
+        } else {
+            // If not paused or no saved time, just unpause
+            isPaused = false
+        }
+        invalidate()
+    }
+
+    fun getPausedTime(): Long {
+        return pausedTime
     }
 
     override fun onDraw(canvas: Canvas) {
