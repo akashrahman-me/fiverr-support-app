@@ -593,6 +593,7 @@ class FiverrLauncherService : Service() {
 
         // Set flag to ignore touch events during automated gesture
         isPerformingAutomatedGesture = true
+        TouchInteractionCallback.isAutomatedGestureActive = true
         Log.d("nvm", "Starting automated gesture - touch detection disabled")
 
         accessibilityService.performPullDownGesture { success ->
@@ -605,6 +606,7 @@ class FiverrLauncherService : Service() {
             // Re-enable touch detection after a short delay (gesture completion + 500ms buffer)
             handler.postDelayed({
                 isPerformingAutomatedGesture = false
+                TouchInteractionCallback.isAutomatedGestureActive = false
                 Log.d("nvm", "Automated gesture completed - touch detection re-enabled")
             }, 800) // 300ms gesture duration + 500ms buffer
         }

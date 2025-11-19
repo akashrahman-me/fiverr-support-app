@@ -20,6 +20,9 @@ object ForegroundAppHolder {
 object TouchInteractionCallback {
     private var callback: (() -> Unit)? = null
 
+    // Flag to track if automated gesture is currently running
+    var isAutomatedGestureActive: Boolean = false
+
     fun setCallback(onTouch: (() -> Unit)?) {
         callback = onTouch
     }
@@ -56,14 +59,24 @@ class FiverrAccessibilityService : AccessibilityService() {
         // Detect user interactions (clicks, touches) - Works on Android 13+
         // TYPE_VIEW_CLICKED captures all user taps/clicks including system UI
         if (event?.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
-            Log.d("nvm", "User click detected via accessibility (TYPE_VIEW_CLICKED)")
+            val packageName = event.packageName?.toString()
+            Log.d("nvm", "User click detected via accessibility (TYPE_VIEW_CLICKED) - package: $packageName")
             TouchInteractionCallback.notifyTouch()
         }
 
         // Additional detection: Scrolling events (user swiping)
         else if (event?.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
-            Log.d("nvm", "User scroll detected via accessibility (TYPE_VIEW_SCROLLED)")
-            TouchInteractionCallback.notifyTouch()
+            val packageName = event.packageName?.toString()
+
+            // Only ignore Fiverr scroll if automated gesture is currently running
+            if (packageName == "com.fiverr.fiverr" && TouchInteractionCallback.isAutomatedGestureActive) {
+                Log.d("nvm", "Ignoring scroll from Fiverr - automated gesture is active")
+            }
+            // Detect all other scrolls including user scrolls in Fiverr (when flag is false)
+            else {
+                Log.d("nvm", "User scroll detected via accessibility (TYPE_VIEW_SCROLLED) - package: $packageName")
+                TouchInteractionCallback.notifyTouch()
+            }
         }
 
         // Additional detection: Touch exploration (accessibility mode)
