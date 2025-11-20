@@ -1362,9 +1362,12 @@ class CircularTimerView(context: android.content.Context) : View(context) {
 
     fun restorePausedState(elapsedTimeMs: Long) {
         // Restore the paused time from saved state (after process death)
+        // This assumes totalDuration and isRunning are already set
         pausedTime = elapsedTimeMs
         startTime = System.currentTimeMillis() - elapsedTimeMs
         isPaused = true
+        // Start the update runnable to show the paused red circle
+        handler.post(updateRunnable)
         Log.d("nvm", "Timer state restored: pausedAt=${pausedTime}ms, remaining=${(totalDuration - pausedTime) / 1000}s")
         invalidate()
     }
