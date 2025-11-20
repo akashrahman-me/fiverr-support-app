@@ -102,6 +102,9 @@ class FiverrLauncherService : Service() {
         registerNetworkCallback()
 
         // Register touch interaction callback from accessibility service
+        // Reset the automated gesture flag to ensure clean state
+        TouchInteractionCallback.isAutomatedGestureActive = false
+        isPerformingAutomatedGesture = false
         TouchInteractionCallback.setCallback { userTouched() }
         Log.d("nvm", "Registered touch interaction callback from accessibility service")
 
@@ -126,7 +129,7 @@ class FiverrLauncherService : Service() {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     isScreenOn = false
-                    Log.d("nvm", "Screen turned OFF - pausing service and starting vibration")
+                    Log.d("nvm", "Screen turned OFF")
 
                     // Pause the service (like touch does) but without idle checker
                     // We'll resume after unlock instead
@@ -135,10 +138,19 @@ class FiverrLauncherService : Service() {
                         lastUserInteractionTime = 0
                         pauseService(startIdleChecker = false) // Don't start idle checker for screen lock
                         Log.d("nvm", "Service paused due to screen lock (lastUserInteractionTime reset to 0)")
-                    }
 
-                    // Start vibration alert
-                    startVibrationAlert()
+                        // Start vibration alert only if NOT paused by internet loss
+                        startVibrationAlert()
+                    } else if (isPaused && isPausedByInternetLoss) {
+                        // Already paused by internet loss - don't vibrate
+                        Log.d("nvm", "Screen turned OFF but already paused by internet loss - NOT starting vibration")
+                    } else if (!isPaused && !isRunning) {
+                        // Service is stopped - don't vibrate
+                        Log.d("nvm", "Screen turned OFF but service is not running - NOT starting vibration")
+                    } else {
+                        // Service is paused for other reasons (user touch) - start vibration
+                        startVibrationAlert()
+                    }
                 }
                 Intent.ACTION_USER_PRESENT -> {
                     // USER_PRESENT fires when user unlocks the device (most reliable)
@@ -175,8 +187,23 @@ class FiverrLauncherService : Service() {
                         // Service was paused by screen lock (not touch), so resume instantly
                         // But still check for media playback, calls, and internet
 
-                        // Don't resume if paused by internet loss - wait for network callback
-                        if (isPausedByInternetLoss) {
+                        // Check if paused by internet loss but internet is now back
+                        if (isPausedByInternetLoss && hasInternet) {
+                            Log.d("nvm", "Screen unlocked, was paused by internet loss but internet is now back - resuming service")
+                            val mediaPlaying = isMediaPlaying()
+                            val inCall = isInCall()
+                            if (mediaPlaying) {
+                                Log.d("nvm", "Internet is back but media is playing - NOT resuming, starting idle checker")
+                                lastUserInteractionTime = System.currentTimeMillis()
+                                handler.post(idleCheckerRunnable)
+                            } else if (inCall) {
+                                Log.d("nvm", "Internet is back but in a call - NOT resuming, starting idle checker")
+                                lastUserInteractionTime = System.currentTimeMillis()
+                                handler.post(idleCheckerRunnable)
+                            } else {
+                                resumeService()
+                            }
+                        } else if (isPausedByInternetLoss) {
                             Log.d("nvm", "Screen unlocked but service is paused by internet loss - NOT resuming (waiting for network)")
                         } else {
                             val mediaPlaying = isMediaPlaying()
@@ -238,8 +265,23 @@ class FiverrLauncherService : Service() {
                             } else if (isPaused && isRunning && lastUserInteractionTime == 0L) {
                                 // Service was paused by screen lock (not touch), check media, calls, and internet
 
-                                // Don't resume if paused by internet loss - wait for network callback
-                                if (isPausedByInternetLoss) {
+                                // Check if paused by internet loss but internet is now back
+                                if (isPausedByInternetLoss && hasInternet) {
+                                    Log.d("nvm", "Screen unlocked (via SCREEN_ON), was paused by internet loss but internet is now back - resuming service")
+                                    val mediaPlaying = isMediaPlaying()
+                                    val inCall = isInCall()
+                                    if (mediaPlaying) {
+                                        Log.d("nvm", "Internet is back but media is playing (via SCREEN_ON) - NOT resuming, starting idle checker")
+                                        lastUserInteractionTime = System.currentTimeMillis()
+                                        handler.post(idleCheckerRunnable)
+                                    } else if (inCall) {
+                                        Log.d("nvm", "Internet is back but in a call (via SCREEN_ON) - NOT resuming, starting idle checker")
+                                        lastUserInteractionTime = System.currentTimeMillis()
+                                        handler.post(idleCheckerRunnable)
+                                    } else {
+                                        resumeService()
+                                    }
+                                } else if (isPausedByInternetLoss) {
                                     Log.d("nvm", "Screen unlocked (via SCREEN_ON) but service is paused by internet loss - NOT resuming (waiting for network)")
                                 } else {
                                     val mediaPlaying = isMediaPlaying()
@@ -722,9 +764,10 @@ class FiverrLauncherService : Service() {
             return
         }
 
-        // If we're paused due to internet loss (or currently offline), ignore touches
+        // If we're paused due to internet loss (or currently offline), restore brightness but keep paused
         if (isPausedByInternetLoss || !hasInternet) {
-            Log.d("nvm", "Touch detected while offline/internet-paused - ignoring user touch")
+            Log.d("nvm", "Touch detected while offline/internet-paused - restoring brightness but staying paused")
+            restoreBrightness()
             return
         }
 
@@ -916,11 +959,14 @@ class FiverrLauncherService : Service() {
 
                             // Auto-resume service immediately - will do regular task (open Fiverr or pull-down)
                             // IMPORTANT: Post to main thread since onCapabilitiesChanged runs on background thread
-                            if (isPaused && isRunning) {
-                                Log.d("nvm", "Internet restored - auto-resuming service")
+                            // ALSO: Don't resume if screen is off - wait for unlock
+                            if (isPaused && isRunning && isScreenOn) {
+                                Log.d("nvm", "Internet restored and screen ON - auto-resuming service")
                                 handler.post {
                                     resumeService()
                                 }
+                            } else if (isPaused && isRunning && !isScreenOn) {
+                                Log.d("nvm", "Internet restored but screen is OFF - NOT resuming (will resume on unlock)")
                             }
                         } else {
                             Log.d("nvm", "Internet lost - clearing Fiverr from recents, then pausing service")
