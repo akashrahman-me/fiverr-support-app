@@ -61,6 +61,7 @@ import com.akash.fiverrsupport.ui.theme.FiverrSupportTheme
 import androidx.core.net.toUri
 import com.akash.fiverrsupport.ui.components.PermissionToggleItem
 import androidx.core.content.edit
+import com.akash.fiverrsupport.ui.components.GradientCard
 
 fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
     val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -261,7 +262,7 @@ fun Root(modifier: Modifier = Modifier) {
                 .verticalScroll(rememberScrollState())
         ) {
             // Gradient Header
-            com.akash.fiverrsupport.ui.components.GradientCard(
+            GradientCard(
                 modifier = Modifier.fillMaxWidth(),
                 gradient = androidx.compose.ui.graphics.Brush.horizontalGradient(
                     colors = listOf(

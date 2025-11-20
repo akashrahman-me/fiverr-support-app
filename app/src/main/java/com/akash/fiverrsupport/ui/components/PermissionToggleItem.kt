@@ -57,7 +57,7 @@ fun PermissionToggleItem(
                         .size(48.dp)
                         .clip(CircleShape)
                         .background(
-                            if (isEnabled) MaterialTheme.colorScheme.primaryContainer
+                            if (isEnabled) MaterialTheme.colorScheme.primaryContainer.copy(0.15f)
                             else MaterialTheme.colorScheme.surfaceVariant
                         ),
                     contentAlignment = Alignment.Center
@@ -92,7 +92,7 @@ fun PermissionToggleItem(
                 onCheckedChange = { onToggle() },
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = MaterialTheme.colorScheme.primary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
+                    checkedTrackColor = MaterialTheme.colorScheme.primaryContainer.copy(0.25f),
                     uncheckedThumbColor = MaterialTheme.colorScheme.outline,
                     uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
                 )

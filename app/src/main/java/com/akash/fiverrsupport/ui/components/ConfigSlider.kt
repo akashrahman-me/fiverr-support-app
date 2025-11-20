@@ -54,7 +54,7 @@ fun ConfigSlider(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(0.15f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
