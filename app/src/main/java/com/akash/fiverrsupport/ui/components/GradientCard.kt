@@ -16,17 +16,28 @@ import androidx.compose.ui.unit.dp
 fun GradientCard(
     modifier: Modifier = Modifier,
     gradient: Brush,
+    topStartCornerRadius: Int = 0,
+    topEndCornerRadius: Int = 0,
+    bottomStartCornerRadius: Int = 0,
+    bottomEndCornerRadius: Int = 0,
     content: @Composable BoxScope.() -> Unit
 ) {
+    val shape = RoundedCornerShape(
+        topStart = topStartCornerRadius.dp,
+        topEnd = topEndCornerRadius.dp,
+        bottomStart = bottomStartCornerRadius.dp,
+        bottomEnd = bottomEndCornerRadius.dp
+    )
+
     Box(
         modifier = modifier
             .shadow(
                 elevation = 8.dp,
-                shape = RoundedCornerShape(16.dp),
+                shape = shape,
                 ambientColor = Color.Black.copy(alpha = 0.1f),
                 spotColor = Color.Black.copy(alpha = 0.1f)
             )
-            .clip(RoundedCornerShape(16.dp))
+            .clip(shape)
             .background(gradient)
     ) {
         content()

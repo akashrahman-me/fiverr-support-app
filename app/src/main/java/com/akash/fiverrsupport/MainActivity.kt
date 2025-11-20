@@ -17,6 +17,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -62,6 +64,7 @@ import androidx.core.net.toUri
 import com.akash.fiverrsupport.ui.components.PermissionToggleItem
 import androidx.core.content.edit
 import com.akash.fiverrsupport.ui.components.GradientCard
+import com.akash.fiverrsupport.ui.components.SectionHeader
 
 fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
     val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -155,17 +158,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @SuppressLint("BatteryLife")
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Root(modifier: Modifier = Modifier) {
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.background
-    ) { innerPadding ->
-        val context = LocalContext.current
-        val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val context = LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
-        val sharedPrefs = context.getSharedPreferences("FiverrSupportPrefs", Context.MODE_PRIVATE)
+    val sharedPrefs = context.getSharedPreferences("FiverrSupportPrefs", Context.MODE_PRIVATE)
 
         val intervalOptions = listOf(5, 10, 30, 60, 180, 300, 600, 1800)
         val idleTimeoutOptions = listOf(5, 10, 30, 60, 120, 300)
@@ -256,24 +254,27 @@ fun Root(modifier: Modifier = Modifier) {
             sharedPrefs.edit { putLong("idle_timeout", (timeoutSeconds * 1000).toLong()) }
         }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-        ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .verticalScroll(rememberScrollState())
+    ) {
             // Gradient Header
             GradientCard(
                 modifier = Modifier.fillMaxWidth(),
                 gradient = androidx.compose.ui.graphics.Brush.horizontalGradient(
                     colors = listOf(
-                        com.akash.fiverrsupport.ui.theme.GradientStart,
-                        com.akash.fiverrsupport.ui.theme.GradientMiddle,
-                        com.akash.fiverrsupport.ui.theme.GradientEnd
+                        com.akash.fiverrsupport.ui.theme.GradientStart.copy(0.1f),
+                        com.akash.fiverrsupport.ui.theme.GradientMiddle.copy(0.1f),
+                        com.akash.fiverrsupport.ui.theme.GradientEnd.copy(0.1f)
                     )
                 )
             ) {
                 Column(
-                    modifier = Modifier.padding(24.dp)
+                    modifier = Modifier
+                        .statusBarsPadding()
+                        .padding(24.dp)
                 ) {
                     Text(
                         text = "Fiverr Support",
@@ -293,8 +294,83 @@ fun Root(modifier: Modifier = Modifier) {
             Column(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
             ) {
-                // Permissions Section
+                // Features Section
                 com.akash.fiverrsupport.ui.components.SectionHeader(
+                    icon = Icons.Default.Build,
+                    title = "Service Control",
+                    subtitle = "Manage automation features"
+                )
+
+                Spacer(modifier = Modifier.padding(12.dp))
+
+                PermissionToggleItem(
+                    icon = Icons.Default.Build,
+                    title = "Enable Service",
+                    isEnabled = isEnabled,
+                    enabledText = "Service is running",
+                    disabledText = "Service is stopped",
+                    onToggle = {
+                        isEnabled = !isEnabled
+                        toggleService(isEnabled)
+                    }
+                )
+
+                Spacer(modifier = Modifier.padding(4.dp))
+
+                val launchIntervalSeconds = intervalOptions[selectedIntervalIndex]
+                val launchIntervalDisplay = when {
+                    launchIntervalSeconds >= 60 -> "${launchIntervalSeconds / 60}m"
+                    else -> "${launchIntervalSeconds}s"
+                }
+
+                com.akash.fiverrsupport.ui.components.ConfigSlider(
+                    icon = Icons.Default.Build,
+                    title = "Launch Interval",
+                    currentValue = launchIntervalDisplay,
+                    description = "App opens every $launchIntervalDisplay",
+                    sliderValue = selectedIntervalIndex.toFloat(),
+                    valueRange = 0f..(intervalOptions.size - 1).toFloat(),
+                    steps = intervalOptions.size - 2,
+                    onValueChange = {
+                        selectedIntervalIndex = it.toInt()
+                        val intervalSeconds = intervalOptions[selectedIntervalIndex]
+                        updateInterval(intervalSeconds, isUserInteracting = true)
+                    },
+                    onValueChangeFinished = {
+                        val intervalSeconds = intervalOptions[selectedIntervalIndex]
+                        updateInterval(intervalSeconds, isUserInteracting = false)
+                    },
+                    optionsText = "Available: 5s, 10s, 30s, 1m, 3m, 5m, 10m, 30m"
+                )
+
+                Spacer(modifier = Modifier.padding(4.dp))
+
+                val idleTimeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
+                val idleTimeoutDisplay = when {
+                    idleTimeoutSeconds >= 60 -> "${idleTimeoutSeconds / 60}m"
+                    else -> "${idleTimeoutSeconds}s"
+                }
+
+                com.akash.fiverrsupport.ui.components.ConfigSlider(
+                    icon = Icons.Default.Settings,
+                    title = "Idle Timeout",
+                    currentValue = idleTimeoutDisplay,
+                    description = "Auto-resume after $idleTimeoutDisplay inactivity",
+                    sliderValue = selectedIdleTimeoutIndex.toFloat(),
+                    valueRange = 0f..(idleTimeoutOptions.size - 1).toFloat(),
+                    steps = idleTimeoutOptions.size - 2,
+                    onValueChange = {
+                        selectedIdleTimeoutIndex = it.toInt()
+                        val timeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
+                        updateIdleTimeout(timeoutSeconds)
+                    },
+                    optionsText = "Available: 5s, 10s, 30s, 1m, 2m, 5m"
+                )
+
+                Spacer(modifier = Modifier.padding(16.dp))
+
+                // Permissions Section
+                SectionHeader(
                     icon = Icons.Default.Settings,
                     title = "Required Permissions",
                     subtitle = "Enable all permissions for optimal performance"
@@ -395,82 +471,6 @@ fun Root(modifier: Modifier = Modifier) {
                 )
 
                 Spacer(modifier = Modifier.padding(16.dp))
-
-                // Features Section
-                com.akash.fiverrsupport.ui.components.SectionHeader(
-                    icon = Icons.Default.Build,
-                    title = "Service Control",
-                    subtitle = "Manage automation features"
-                )
-
-                Spacer(modifier = Modifier.padding(12.dp))
-
-                PermissionToggleItem(
-                    icon = Icons.Default.Build,
-                    title = "Enable Service",
-                    isEnabled = isEnabled,
-                    enabledText = "Service is running",
-                    disabledText = "Service is stopped",
-                    onToggle = {
-                        isEnabled = !isEnabled
-                        toggleService(isEnabled)
-                    }
-                )
-
-                Spacer(modifier = Modifier.padding(4.dp))
-
-                val launchIntervalSeconds = intervalOptions[selectedIntervalIndex]
-                val launchIntervalDisplay = when {
-                    launchIntervalSeconds >= 60 -> "${launchIntervalSeconds / 60}m"
-                    else -> "${launchIntervalSeconds}s"
-                }
-
-                com.akash.fiverrsupport.ui.components.ConfigSlider(
-                    icon = Icons.Default.Build,
-                    title = "Launch Interval",
-                    currentValue = launchIntervalDisplay,
-                    description = "App opens every $launchIntervalDisplay",
-                    sliderValue = selectedIntervalIndex.toFloat(),
-                    valueRange = 0f..(intervalOptions.size - 1).toFloat(),
-                    steps = intervalOptions.size - 2,
-                    onValueChange = {
-                        selectedIntervalIndex = it.toInt()
-                        val intervalSeconds = intervalOptions[selectedIntervalIndex]
-                        updateInterval(intervalSeconds, isUserInteracting = true)
-                    },
-                    onValueChangeFinished = {
-                        val intervalSeconds = intervalOptions[selectedIntervalIndex]
-                        updateInterval(intervalSeconds, isUserInteracting = false)
-                    },
-                    optionsText = "Available: 5s, 10s, 30s, 1m, 3m, 5m, 10m, 30m"
-                )
-
-                Spacer(modifier = Modifier.padding(4.dp))
-
-                val idleTimeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
-                val idleTimeoutDisplay = when {
-                    idleTimeoutSeconds >= 60 -> "${idleTimeoutSeconds / 60}m"
-                    else -> "${idleTimeoutSeconds}s"
-                }
-
-                com.akash.fiverrsupport.ui.components.ConfigSlider(
-                    icon = Icons.Default.Settings,
-                    title = "Idle Timeout",
-                    currentValue = idleTimeoutDisplay,
-                    description = "Auto-resume after $idleTimeoutDisplay inactivity",
-                    sliderValue = selectedIdleTimeoutIndex.toFloat(),
-                    valueRange = 0f..(idleTimeoutOptions.size - 1).toFloat(),
-                    steps = idleTimeoutOptions.size - 2,
-                    onValueChange = {
-                        selectedIdleTimeoutIndex = it.toInt()
-                        val timeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
-                        updateIdleTimeout(timeoutSeconds)
-                    },
-                    optionsText = "Available: 5s, 10s, 30s, 1m, 2m, 5m"
-                )
-
-                Spacer(modifier = Modifier.padding(16.dp))
             }
         }
-    }
 }
