@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -158,139 +159,74 @@ class MainActivity : ComponentActivity() {
 fun Root(modifier: Modifier = Modifier) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Fiverr Support",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary
-                )
-            )
-        }
+        containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
         val context = LocalContext.current
         val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
-        // Load saved interval from SharedPreferences
         val sharedPrefs = context.getSharedPreferences("FiverrSupportPrefs", Context.MODE_PRIVATE)
 
-        // Define interval options in seconds: 5s, 10s, 30s, 1m, 3m, 5m, 10m, 30m
         val intervalOptions = listOf(5, 10, 30, 60, 180, 300, 600, 1800)
-
-        // Define idle timeout options in seconds: 5s, 10s, 30s, 1m, 2m, 5m
         val idleTimeoutOptions = listOf(5, 10, 30, 60, 120, 300)
 
-        // Check if service is actually running
         var isEnabled by remember {
             mutableStateOf(isServiceRunning(context, FiverrLauncherService::class.java))
         }
 
-        // Load saved interval, default to 30 seconds (index 2)
         val savedIntervalSeconds = (sharedPrefs.getLong("service_interval", 30000L) / 1000).toInt()
         val savedIntervalIndex = intervalOptions.indexOf(savedIntervalSeconds).let { if (it >= 0) it else 2 }
-
         var selectedIntervalIndex by remember { mutableStateOf(savedIntervalIndex) }
 
-        // Load saved idle timeout, default to 5 seconds (index 0)
         val savedIdleTimeoutSeconds = (sharedPrefs.getLong("idle_timeout", 5000L) / 1000).toInt()
         val savedIdleTimeoutIndex = idleTimeoutOptions.indexOf(savedIdleTimeoutSeconds).let { if (it >= 0) it else 0 }
-
         var selectedIdleTimeoutIndex by remember { mutableStateOf(savedIdleTimeoutIndex) }
 
-        var isOverlayEnabled by remember {
-            mutableStateOf(Settings.canDrawOverlays(context))
-        }
+        var isOverlayEnabled by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
         var isNotificationEnabled by remember {
             mutableStateOf(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    ContextCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.POST_NOTIFICATIONS
-                    ) == PackageManager.PERMISSION_GRANTED
-                } else {
-                    true // Always true for older versions
-                }
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                } else true
             )
         }
         var isBatteryOptimizationDisabled by remember {
-            mutableStateOf(
-                (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
-                    .isIgnoringBatteryOptimizations(context.packageName)
-            )
+            mutableStateOf((context.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName))
         }
-        var isWriteSettingsEnabled by remember {
-            mutableStateOf(Settings.System.canWrite(context)
-            )
-        }
+        var isWriteSettingsEnabled by remember { mutableStateOf(Settings.System.canWrite(context)) }
         var isPhoneStatePermissionEnabled by remember {
-            mutableStateOf(
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.READ_PHONE_STATE
-                ) == PackageManager.PERMISSION_GRANTED
-            )
+            mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED)
         }
         var isAccessibilityEnabled by remember {
-            mutableStateOf(
-                com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled(context)
-            )
+            mutableStateOf(com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled(context))
         }
 
-        // Update all permission states when activity resumes
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_RESUME) {
-                    // Check if service is actually running
                     isEnabled = isServiceRunning(context, FiverrLauncherService::class.java)
-
                     isOverlayEnabled = Settings.canDrawOverlays(context)
                     isNotificationEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.POST_NOTIFICATIONS
-                        ) == PackageManager.PERMISSION_GRANTED
-                    } else {
-                        true
-                    }
-                    isBatteryOptimizationDisabled =
-                        (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
-                            .isIgnoringBatteryOptimizations(context.packageName)
-
-                    isWriteSettingsEnabled =
-                        Settings.System.canWrite(context)
-
-                    isPhoneStatePermissionEnabled = ContextCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.READ_PHONE_STATE
-                    ) == PackageManager.PERMISSION_GRANTED
-
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                    } else true
+                    isBatteryOptimizationDisabled = (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName)
+                    isWriteSettingsEnabled = Settings.System.canWrite(context)
+                    isPhoneStatePermissionEnabled = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
                     isAccessibilityEnabled = com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled(context)
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose {
-                lifecycleOwner.lifecycle.removeObserver(observer)
-            }
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
 
-        // Force check service state when composable first loads
         LaunchedEffect(Unit) {
             isEnabled = isServiceRunning(context, FiverrLauncherService::class.java)
             Log.d("nvm", "Initial service check: isEnabled = $isEnabled")
         }
 
-        // Start or stop the foreground service based on the switch state
         fun toggleService(enabled: Boolean) {
             val serviceIntent = Intent(context, FiverrLauncherService::class.java)
             serviceIntent.action = if (enabled) FiverrLauncherService.ACTION_START else FiverrLauncherService.ACTION_STOP
 
-            // Pass interval and idle timeout when starting the service
             if (enabled) {
                 val intervalSeconds = intervalOptions[selectedIntervalIndex]
                 val timeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
@@ -305,338 +241,234 @@ fun Root(modifier: Modifier = Modifier) {
             }
         }
 
-        // Update interval while service is running
         fun updateInterval(intervalSeconds: Int, isUserInteracting: Boolean = false) {
-            // Save to SharedPreferences
-            sharedPrefs.edit {
-                putLong("service_interval", (intervalSeconds * 1000).toLong())
-            }
-
+            sharedPrefs.edit { putLong("service_interval", (intervalSeconds * 1000).toLong()) }
             if (isEnabled) {
                 val serviceIntent = Intent(context, FiverrLauncherService::class.java)
-                if (isUserInteracting) {
-                    // User is actively dragging slider - pause service
-                    serviceIntent.action = FiverrLauncherService.ACTION_PAUSE_FOR_SLIDER
-                } else {
-                    // User finished dragging - update interval and resume
-                    serviceIntent.action = FiverrLauncherService.ACTION_UPDATE_INTERVAL
-                }
+                serviceIntent.action = if (isUserInteracting) FiverrLauncherService.ACTION_PAUSE_FOR_SLIDER else FiverrLauncherService.ACTION_UPDATE_INTERVAL
                 serviceIntent.putExtra(FiverrLauncherService.EXTRA_INTERVAL, (intervalSeconds * 1000).toLong())
                 context.startService(serviceIntent)
             }
         }
 
-        // Update idle timeout while service is running
         fun updateIdleTimeout(timeoutSeconds: Int) {
-            // Save to SharedPreferences
-            sharedPrefs.edit {
-                putLong("idle_timeout", (timeoutSeconds * 1000).toLong())
-            }
-            // Note: Idle timeout doesn't require service restart, it will be picked up on next pause/resume cycle
+            sharedPrefs.edit { putLong("idle_timeout", (timeoutSeconds * 1000).toLong()) }
         }
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp)
         ) {
-            // Permissions Section Header
-            Text(
-                text = "Required Permissions",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-
-
-            // Display Overlay Permission toggle
-            PermissionToggleItem(
-                icon = Icons.Default.Star,
-                title = "Display Overlay Permission",
-                isEnabled = isOverlayEnabled,
-                enabledText = "Permission granted",
-                disabledText = "Permission required",
-                onToggle = {
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        "package:${context.packageName}".toUri()
+            // Gradient Header
+            com.akash.fiverrsupport.ui.components.GradientCard(
+                modifier = Modifier.fillMaxWidth(),
+                gradient = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                    colors = listOf(
+                        com.akash.fiverrsupport.ui.theme.GradientStart,
+                        com.akash.fiverrsupport.ui.theme.GradientMiddle,
+                        com.akash.fiverrsupport.ui.theme.GradientEnd
                     )
-                    context.startActivity(intent)
-                    Toast.makeText(
-                        context,
-                        "Please grant overlay permission",
-                        Toast.LENGTH_LONG
-                    ).show()
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "Fiverr Support",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = androidx.compose.ui.graphics.Color.White
+                    )
+                    Spacer(modifier = Modifier.padding(4.dp))
+                    Text(
+                        text = "Automated workflow assistant for Fiverr",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
+                    )
                 }
-            )
+            }
 
-            Spacer(modifier = Modifier.padding(4.dp))
+            Column(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
+            ) {
+                // Permissions Section
+                com.akash.fiverrsupport.ui.components.SectionHeader(
+                    icon = Icons.Default.Settings,
+                    title = "Required Permissions",
+                    subtitle = "Enable all permissions for optimal performance"
+                )
 
-            // Notification Permission toggle
-            PermissionToggleItem(
-                icon = Icons.Default.Notifications,
-                title = "Notification Permission",
-                isEnabled = isNotificationEnabled,
-                enabledText = "Permission granted",
-                disabledText = "Permission required",
-                onToggle = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                        }
+                Spacer(modifier = Modifier.padding(12.dp))
+
+                PermissionToggleItem(
+                    icon = Icons.Default.Star,
+                    title = "Display Overlay",
+                    isEnabled = isOverlayEnabled,
+                    enabledText = "Permission granted",
+                    disabledText = "Required for background operations",
+                    onToggle = {
+                        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri())
                         context.startActivity(intent)
-                        Toast.makeText(
-                            context,
-                            "Please enable notifications",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        Toast.makeText(context, "Please grant overlay permission", Toast.LENGTH_LONG).show()
                     }
-                }
-            )
+                )
 
-            Spacer(modifier = Modifier.padding(4.dp))
+                PermissionToggleItem(
+                    icon = Icons.Default.Notifications,
+                    title = "Notifications",
+                    isEnabled = isNotificationEnabled,
+                    enabledText = "Permission granted",
+                    disabledText = "Required for service status",
+                    onToggle = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            }
+                            context.startActivity(intent)
+                            Toast.makeText(context, "Please enable notifications", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                )
 
-            // Battery Optimization toggle
-            PermissionToggleItem(
-                icon = Icons.Default.Warning,
-                title = "Battery Optimization",
-                isEnabled = isBatteryOptimizationDisabled,
-                enabledText = "Exemption granted",
-                disabledText = "Exemption required",
-                onToggle = {
-                    val intent =
-                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                PermissionToggleItem(
+                    icon = Icons.Default.Warning,
+                    title = "Battery Optimization",
+                    isEnabled = isBatteryOptimizationDisabled,
+                    enabledText = "Exemption granted",
+                    disabledText = "Required for background operation",
+                    onToggle = {
+                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                             data = "package:${context.packageName}".toUri()
                         }
-                    try {
-                        context.startActivity(intent)
-                        Toast.makeText(
-                            context,
-                            "Please allow battery optimization exemption",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    } catch (e: Exception) {
-                        Toast.makeText(
-                            context,
-                            "Could not open battery settings",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
-            )
-
-            Spacer(modifier = Modifier.padding(4.dp))
-
-            // Write Settings Permission toggle
-            PermissionToggleItem(
-                icon = Icons.Default.Settings,
-                title = "Modify System Settings",
-                isEnabled = isWriteSettingsEnabled,
-                enabledText = "Permission granted",
-                disabledText = "Required for brightness control",
-                onToggle = {
-                    val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
-                        data = "package:${context.packageName}".toUri()
-                    }
-                    context.startActivity(intent)
-                    Toast.makeText(
-                        context,
-                        "Please grant permission to modify system settings",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            )
-
-            Spacer(modifier = Modifier.padding(4.dp))
-
-            // Phone State Permission toggle
-            PermissionToggleItem(
-                icon = Icons.Default.Settings, // You can use a different icon if you want
-                title = "Phone State Permission",
-                isEnabled = isPhoneStatePermissionEnabled,
-                enabledText = "Permission granted",
-                disabledText = "Required for call detection",
-                onToggle = {
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = "package:${context.packageName}".toUri()
-                    }
-                    context.startActivity(intent)
-                    Toast.makeText(
-                        context,
-                        "Please grant Phone permission in app settings",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            )
-
-            Spacer(modifier = Modifier.padding(4.dp))
-
-            // Accessibility Service toggle
-            PermissionToggleItem(
-                icon = Icons.Default.Star, // Touch gesture icon
-                title = "Accessibility Service",
-                isEnabled = isAccessibilityEnabled,
-                enabledText = "Service enabled",
-                disabledText = "Required for auto-scroll & app detection",
-                onToggle = {
-                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                    context.startActivity(intent)
-                    Toast.makeText(
-                        context,
-                        "Please enable Fiverr Support accessibility service",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            )
-
-
-            // Divider between permissions and features
-            Spacer(modifier = Modifier.padding(12.dp))
-            HorizontalDivider(
-                thickness = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant
-            )
-            Spacer(modifier = Modifier.padding(12.dp))
-
-            // App Features Section Header
-            Text(
-                text = "App Features",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-
-            // Service toggle
-            PermissionToggleItem(
-                icon = Icons.Default.Build,
-                title = "Enable Support Service",
-                isEnabled = isEnabled,
-                enabledText = "Service is running",
-                disabledText = "Service is disabled",
-                onToggle = {
-                    isEnabled = !isEnabled
-                    toggleService(isEnabled)
-                }
-            )
-
-            Spacer(modifier = Modifier.padding(8.dp))
-
-            // Launch Interval Selector
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical = 8.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Build,
-                        contentDescription = "Launch Interval",
-                        modifier = Modifier.size(40.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column {
-                        val launchIntervalSeconds = intervalOptions[selectedIntervalIndex]
-                        val displayText = when {
-                            launchIntervalSeconds >= 60 -> "${launchIntervalSeconds / 60}m"
-                            else -> "${launchIntervalSeconds}s"
+                        try {
+                            context.startActivity(intent)
+                            Toast.makeText(context, "Please allow battery optimization exemption", Toast.LENGTH_LONG).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Could not open battery settings", Toast.LENGTH_SHORT).show()
                         }
-                        Text(
-                            text = "Launch Interval: $displayText",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "Fiverr app will open every $displayText",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
+                )
+
+                PermissionToggleItem(
+                    icon = Icons.Default.Settings,
+                    title = "System Settings",
+                    isEnabled = isWriteSettingsEnabled,
+                    enabledText = "Permission granted",
+                    disabledText = "Required for brightness control",
+                    onToggle = {
+                        val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                            data = "package:${context.packageName}".toUri()
+                        }
+                        context.startActivity(intent)
+                        Toast.makeText(context, "Please grant permission to modify settings", Toast.LENGTH_LONG).show()
+                    }
+                )
+
+                PermissionToggleItem(
+                    icon = Icons.Default.Build,
+                    title = "Phone State",
+                    isEnabled = isPhoneStatePermissionEnabled,
+                    enabledText = "Permission granted",
+                    disabledText = "Required for call detection",
+                    onToggle = {
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = "package:${context.packageName}".toUri()
+                        }
+                        context.startActivity(intent)
+                        Toast.makeText(context, "Please grant Phone permission", Toast.LENGTH_LONG).show()
+                    }
+                )
+
+                PermissionToggleItem(
+                    icon = Icons.Default.Star,
+                    title = "Accessibility Service",
+                    isEnabled = isAccessibilityEnabled,
+                    enabledText = "Service enabled",
+                    disabledText = "Required for gestures & app detection",
+                    onToggle = {
+                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        context.startActivity(intent)
+                        Toast.makeText(context, "Please enable accessibility service", Toast.LENGTH_LONG).show()
+                    }
+                )
+
+                Spacer(modifier = Modifier.padding(16.dp))
+
+                // Features Section
+                com.akash.fiverrsupport.ui.components.SectionHeader(
+                    icon = Icons.Default.Build,
+                    title = "Service Control",
+                    subtitle = "Manage automation features"
+                )
+
+                Spacer(modifier = Modifier.padding(12.dp))
+
+                PermissionToggleItem(
+                    icon = Icons.Default.Build,
+                    title = "Enable Service",
+                    isEnabled = isEnabled,
+                    enabledText = "Service is running",
+                    disabledText = "Service is stopped",
+                    onToggle = {
+                        isEnabled = !isEnabled
+                        toggleService(isEnabled)
+                    }
+                )
+
+                Spacer(modifier = Modifier.padding(4.dp))
+
+                val launchIntervalSeconds = intervalOptions[selectedIntervalIndex]
+                val launchIntervalDisplay = when {
+                    launchIntervalSeconds >= 60 -> "${launchIntervalSeconds / 60}m"
+                    else -> "${launchIntervalSeconds}s"
                 }
-                Slider(
-                    value = selectedIntervalIndex.toFloat(),
+
+                com.akash.fiverrsupport.ui.components.ConfigSlider(
+                    icon = Icons.Default.Build,
+                    title = "Launch Interval",
+                    currentValue = launchIntervalDisplay,
+                    description = "App opens every $launchIntervalDisplay",
+                    sliderValue = selectedIntervalIndex.toFloat(),
+                    valueRange = 0f..(intervalOptions.size - 1).toFloat(),
+                    steps = intervalOptions.size - 2,
                     onValueChange = {
                         selectedIntervalIndex = it.toInt()
                         val intervalSeconds = intervalOptions[selectedIntervalIndex]
-                        // Pause service while user is dragging slider
                         updateInterval(intervalSeconds, isUserInteracting = true)
                     },
                     onValueChangeFinished = {
-                        // User released the slider - update interval and resume service
                         val intervalSeconds = intervalOptions[selectedIntervalIndex]
                         updateInterval(intervalSeconds, isUserInteracting = false)
                     },
-                    valueRange = 0f..(intervalOptions.size - 1).toFloat(),
-                    steps = intervalOptions.size - 2, // Steps between discrete values
-                    enabled = true
+                    optionsText = "Available: 5s, 10s, 30s, 1m, 3m, 5m, 10m, 30m"
                 )
-                Text(
-                    text = "Options: 5s, 10s, 30s, 1m, 3m, 5m, 10m, 30m",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
 
-            Spacer(modifier = Modifier.padding(8.dp))
+                Spacer(modifier = Modifier.padding(4.dp))
 
-            // Idle Timeout Selector
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical = 8.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Idle Timeout",
-                        modifier = Modifier.size(40.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column {
-                        val idleTimeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
-                        val displayText = when {
-                            idleTimeoutSeconds >= 60 -> "${idleTimeoutSeconds / 60}m"
-                            else -> "${idleTimeoutSeconds}s"
-                        }
-                        Text(
-                            text = "Idle Timeout: $displayText",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "Service resumes after $displayText of inactivity",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                val idleTimeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
+                val idleTimeoutDisplay = when {
+                    idleTimeoutSeconds >= 60 -> "${idleTimeoutSeconds / 60}m"
+                    else -> "${idleTimeoutSeconds}s"
                 }
-                Slider(
-                    value = selectedIdleTimeoutIndex.toFloat(),
+
+                com.akash.fiverrsupport.ui.components.ConfigSlider(
+                    icon = Icons.Default.Settings,
+                    title = "Idle Timeout",
+                    currentValue = idleTimeoutDisplay,
+                    description = "Auto-resume after $idleTimeoutDisplay inactivity",
+                    sliderValue = selectedIdleTimeoutIndex.toFloat(),
+                    valueRange = 0f..(idleTimeoutOptions.size - 1).toFloat(),
+                    steps = idleTimeoutOptions.size - 2,
                     onValueChange = {
                         selectedIdleTimeoutIndex = it.toInt()
                         val timeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
                         updateIdleTimeout(timeoutSeconds)
                     },
-                    valueRange = 0f..(idleTimeoutOptions.size - 1).toFloat(),
-                    steps = idleTimeoutOptions.size - 2, // Steps between discrete values
-                    enabled = true
+                    optionsText = "Available: 5s, 10s, 30s, 1m, 2m, 5m"
                 )
-                Text(
-                    text = "Options: 5s, 10s, 30s, 1m, 2m, 5m",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+
+                Spacer(modifier = Modifier.padding(16.dp))
             }
         }
     }
