@@ -369,108 +369,131 @@ fun Root(modifier: Modifier = Modifier) {
 
                 Spacer(modifier = Modifier.padding(16.dp))
 
-                // Permissions Section
-                SectionHeader(
-                    icon = Icons.Default.Settings,
-                    title = "Required Permissions",
-                    subtitle = "Enable all permissions for optimal performance"
-                )
+                // Check if all permissions are granted
+                val allPermissionsGranted = isOverlayEnabled &&
+                        isNotificationEnabled &&
+                        isBatteryOptimizationDisabled &&
+                        isWriteSettingsEnabled &&
+                        isPhoneStatePermissionEnabled &&
+                        isAccessibilityEnabled
 
-                Spacer(modifier = Modifier.padding(12.dp))
+                // Only show permissions section if not all permissions are granted
+                if (!allPermissionsGranted) {
+                    // Permissions Section
+                    SectionHeader(
+                        icon = Icons.Default.Settings,
+                        title = "Required Permissions",
+                        subtitle = "Enable all permissions for optimal performance"
+                    )
 
-                PermissionToggleItem(
-                    icon = Icons.Default.Star,
-                    title = "Display Overlay",
-                    isEnabled = isOverlayEnabled,
-                    enabledText = "Permission granted",
-                    disabledText = "Required for background operations",
-                    onToggle = {
-                        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri())
-                        context.startActivity(intent)
-                        Toast.makeText(context, "Please grant overlay permission", Toast.LENGTH_LONG).show()
-                    }
-                )
+                    Spacer(modifier = Modifier.padding(12.dp))
 
-                PermissionToggleItem(
-                    icon = Icons.Default.Notifications,
-                    title = "Notifications",
-                    isEnabled = isNotificationEnabled,
-                    enabledText = "Permission granted",
-                    disabledText = "Required for service status",
-                    onToggle = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    if (!isOverlayEnabled) {
+                        PermissionToggleItem(
+                            icon = Icons.Default.Star,
+                            title = "Display Overlay",
+                            isEnabled = isOverlayEnabled,
+                            enabledText = "Permission granted",
+                            disabledText = "Required for background operations",
+                            onToggle = {
+                                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri())
+                                context.startActivity(intent)
+                                Toast.makeText(context, "Please grant overlay permission", Toast.LENGTH_LONG).show()
                             }
-                            context.startActivity(intent)
-                            Toast.makeText(context, "Please enable notifications", Toast.LENGTH_LONG).show()
-                        }
+                        )
                     }
-                )
 
-                PermissionToggleItem(
-                    icon = Icons.Default.Warning,
-                    title = "Battery Optimization",
-                    isEnabled = isBatteryOptimizationDisabled,
-                    enabledText = "Exemption granted",
-                    disabledText = "Required for background operation",
-                    onToggle = {
-                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                            data = "package:${context.packageName}".toUri()
-                        }
-                        try {
-                            context.startActivity(intent)
-                            Toast.makeText(context, "Please allow battery optimization exemption", Toast.LENGTH_LONG).show()
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "Could not open battery settings", Toast.LENGTH_SHORT).show()
-                        }
+                    if (!isNotificationEnabled) {
+                        PermissionToggleItem(
+                            icon = Icons.Default.Notifications,
+                            title = "Notifications",
+                            isEnabled = isNotificationEnabled,
+                            enabledText = "Permission granted",
+                            disabledText = "Required for service status",
+                            onToggle = {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                    }
+                                    context.startActivity(intent)
+                                    Toast.makeText(context, "Please enable notifications", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        )
                     }
-                )
 
-                PermissionToggleItem(
-                    icon = Icons.Default.Settings,
-                    title = "System Settings",
-                    isEnabled = isWriteSettingsEnabled,
-                    enabledText = "Permission granted",
-                    disabledText = "Required for brightness control",
-                    onToggle = {
-                        val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
-                            data = "package:${context.packageName}".toUri()
-                        }
-                        context.startActivity(intent)
-                        Toast.makeText(context, "Please grant permission to modify settings", Toast.LENGTH_LONG).show()
+                    if (!isBatteryOptimizationDisabled) {
+                        PermissionToggleItem(
+                            icon = Icons.Default.Warning,
+                            title = "Battery Optimization",
+                            isEnabled = isBatteryOptimizationDisabled,
+                            enabledText = "Exemption granted",
+                            disabledText = "Required for background operation",
+                            onToggle = {
+                                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                    data = "package:${context.packageName}".toUri()
+                                }
+                                try {
+                                    context.startActivity(intent)
+                                    Toast.makeText(context, "Please allow battery optimization exemption", Toast.LENGTH_LONG).show()
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "Could not open battery settings", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        )
                     }
-                )
 
-                PermissionToggleItem(
-                    icon = Icons.Default.Build,
-                    title = "Phone State",
-                    isEnabled = isPhoneStatePermissionEnabled,
-                    enabledText = "Permission granted",
-                    disabledText = "Required for call detection",
-                    onToggle = {
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = "package:${context.packageName}".toUri()
-                        }
-                        context.startActivity(intent)
-                        Toast.makeText(context, "Please grant Phone permission", Toast.LENGTH_LONG).show()
+                    if (!isWriteSettingsEnabled) {
+                        PermissionToggleItem(
+                            icon = Icons.Default.Settings,
+                            title = "System Settings",
+                            isEnabled = isWriteSettingsEnabled,
+                            enabledText = "Permission granted",
+                            disabledText = "Required for brightness control",
+                            onToggle = {
+                                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                                    data = "package:${context.packageName}".toUri()
+                                }
+                                context.startActivity(intent)
+                                Toast.makeText(context, "Please grant permission to modify settings", Toast.LENGTH_LONG).show()
+                            }
+                        )
                     }
-                )
 
-                PermissionToggleItem(
-                    icon = Icons.Default.Star,
-                    title = "Accessibility Service",
-                    isEnabled = isAccessibilityEnabled,
-                    enabledText = "Service enabled",
-                    disabledText = "Required for gestures & app detection",
-                    onToggle = {
-                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                        context.startActivity(intent)
-                        Toast.makeText(context, "Please enable accessibility service", Toast.LENGTH_LONG).show()
+                    if (!isPhoneStatePermissionEnabled) {
+                        PermissionToggleItem(
+                            icon = Icons.Default.Build,
+                            title = "Phone State",
+                            isEnabled = isPhoneStatePermissionEnabled,
+                            enabledText = "Permission granted",
+                            disabledText = "Required for call detection",
+                            onToggle = {
+                                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = "package:${context.packageName}".toUri()
+                                }
+                                context.startActivity(intent)
+                                Toast.makeText(context, "Please grant Phone permission", Toast.LENGTH_LONG).show()
+                            }
+                        )
                     }
-                )
 
-                Spacer(modifier = Modifier.padding(16.dp))
+                    if (!isAccessibilityEnabled) {
+                        PermissionToggleItem(
+                            icon = Icons.Default.Star,
+                            title = "Accessibility Service",
+                            isEnabled = isAccessibilityEnabled,
+                            enabledText = "Service enabled",
+                            disabledText = "Required for gestures & app detection",
+                            onToggle = {
+                                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                context.startActivity(intent)
+                                Toast.makeText(context, "Please enable accessibility service", Toast.LENGTH_LONG).show()
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.padding(16.dp))
+                }
             }
         }
 }
