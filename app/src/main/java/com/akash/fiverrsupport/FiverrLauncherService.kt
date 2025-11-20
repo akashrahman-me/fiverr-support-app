@@ -50,7 +50,7 @@ class FiverrLauncherService : Service() {
     private var isPaused = false // New: Track if service is paused due to user interaction
     private var launchInterval = 20000L // Default 20 seconds
     private var lastUserInteractionTime = 0L
-    private val idleTimeout = 5000L
+    private var idleTimeout = 5000L // Default 5 seconds, configurable from MainActivity
 
     // Flag to ignore touch events during automated gestures
     private var isPerformingAutomatedGesture = false
@@ -377,13 +377,15 @@ class FiverrLauncherService : Service() {
             val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
             val wasEnabled = prefs.getBoolean("service_enabled", false)
             val savedInterval = prefs.getLong("service_interval", 20000L)
+            val savedIdleTimeout = prefs.getLong("idle_timeout", 5000L)
             val wasPaused = prefs.getBoolean("service_paused", false)
             val savedPausedTime = prefs.getLong("paused_time_ms", 0L)
             val wasPausedByInternetLoss = prefs.getBoolean("paused_by_internet_loss", false)
 
             if (wasEnabled) {
-                Log.d("nvm", "Restoring service with interval: ${savedInterval}ms, wasPaused=$wasPaused, pausedTime=${savedPausedTime}ms")
+                Log.d("nvm", "Restoring service with interval: ${savedInterval}ms, idleTimeout: ${savedIdleTimeout}ms, wasPaused=$wasPaused, pausedTime=${savedPausedTime}ms")
                 launchInterval = savedInterval
+                idleTimeout = savedIdleTimeout
                 startForegroundServiceInternal()
                 isRunning = true
 
@@ -448,20 +450,24 @@ class FiverrLauncherService : Service() {
                 // Get interval from intent, default to 20 seconds
                 launchInterval = intent.getLongExtra(EXTRA_INTERVAL, 20000L)
 
+                // Get idle timeout from intent, default to 5 seconds
+                idleTimeout = intent.getLongExtra(EXTRA_IDLE_TIMEOUT, 5000L)
+
                 // Save service state as enabled - use commit() for immediate write
                 val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
                 prefs.edit()
                     .putBoolean("service_enabled", true)
                     .putLong("service_interval", launchInterval)
+                    .putLong("idle_timeout", idleTimeout)
                     .commit() // Use commit() instead of apply() for immediate write
 
-                Log.d("nvm", "Saved state: service_enabled=true, interval=${launchInterval}ms")
+                Log.d("nvm", "Saved state: service_enabled=true, interval=${launchInterval}ms, idleTimeout=${idleTimeout}ms")
 
                 startForegroundServiceInternal()
                 isRunning = true
                 handler.post(launchRunnable)
 
-                Log.d("nvm", "FiverrLauncherService started with interval: ${launchInterval}ms")
+                Log.d("nvm", "FiverrLauncherService started with interval: ${launchInterval}ms, idleTimeout: ${idleTimeout}ms")
 
                 // Create overlay and acquire wake lock
                 createOverlay()
@@ -1298,6 +1304,7 @@ class FiverrLauncherService : Service() {
         const val ACTION_UPDATE_INTERVAL = "ACTION_UPDATE_INTERVAL"
         const val ACTION_PAUSE_FOR_SLIDER = "ACTION_PAUSE_FOR_SLIDER"
         const val EXTRA_INTERVAL = "EXTRA_INTERVAL"
+        const val EXTRA_IDLE_TIMEOUT = "EXTRA_IDLE_TIMEOUT"
         const val VIBRATION_CHANNEL_ID = "FiverrSupportVibrationChannel"
         const val VIBRATION_NOTIFICATION_ID = 2
         const val VIBRATION_NOTIFICATION_ID_ALT = 3
@@ -1455,9 +1462,13 @@ class CircularTimerView(context: android.content.Context) : View(context) {
         val paint = if (isPaused) pausedPaint else progressPaint
         canvas.drawArc(rectF, -90f, progress, false, paint)
 
-        // Draw remaining time text
-        val seconds = (remaining / 1000).toInt()
-        val text = "${seconds}s"
+        // Draw remaining time text with appropriate suffix (s/m/h)
+        val remainingSeconds = (remaining / 1000).toInt()
+        val text = when {
+            remainingSeconds >= 3600 -> "${remainingSeconds / 3600}h" // Hours
+            remainingSeconds >= 60 -> "${remainingSeconds / 60}m"    // Minutes
+            else -> "${remainingSeconds}s"                            // Seconds
+        }
         canvas.drawText(text, centerX, centerY + 8, textPaint)
         }
     }

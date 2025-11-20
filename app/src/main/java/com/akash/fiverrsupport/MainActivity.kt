@@ -45,11 +45,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -180,13 +180,29 @@ fun Root(modifier: Modifier = Modifier) {
         // Load saved interval from SharedPreferences
         val sharedPrefs = context.getSharedPreferences("FiverrSupportPrefs", Context.MODE_PRIVATE)
 
+        // Define interval options in seconds: 5s, 10s, 30s, 1m, 3m, 5m, 10m, 30m
+        val intervalOptions = listOf(5, 10, 30, 60, 180, 300, 600, 1800)
+
+        // Define idle timeout options in seconds: 5s, 10s, 30s, 1m, 2m, 5m
+        val idleTimeoutOptions = listOf(5, 10, 30, 60, 120, 300)
+
         // Check if service is actually running
         var isEnabled by remember {
             mutableStateOf(isServiceRunning(context, FiverrLauncherService::class.java))
         }
-        var launchIntervalSeconds by remember {
-            mutableFloatStateOf(sharedPrefs.getFloat("launch_interval", 20f)) // Default 20 seconds
-        }
+
+        // Load saved interval, default to 30 seconds (index 2)
+        val savedIntervalSeconds = (sharedPrefs.getLong("service_interval", 30000L) / 1000).toInt()
+        val savedIntervalIndex = intervalOptions.indexOf(savedIntervalSeconds).let { if (it >= 0) it else 2 }
+
+        var selectedIntervalIndex by remember { mutableStateOf(savedIntervalIndex) }
+
+        // Load saved idle timeout, default to 5 seconds (index 0)
+        val savedIdleTimeoutSeconds = (sharedPrefs.getLong("idle_timeout", 5000L) / 1000).toInt()
+        val savedIdleTimeoutIndex = idleTimeoutOptions.indexOf(savedIdleTimeoutSeconds).let { if (it >= 0) it else 0 }
+
+        var selectedIdleTimeoutIndex by remember { mutableStateOf(savedIdleTimeoutIndex) }
+
         var isOverlayEnabled by remember {
             mutableStateOf(Settings.canDrawOverlays(context))
         }
@@ -274,9 +290,12 @@ fun Root(modifier: Modifier = Modifier) {
             val serviceIntent = Intent(context, FiverrLauncherService::class.java)
             serviceIntent.action = if (enabled) FiverrLauncherService.ACTION_START else FiverrLauncherService.ACTION_STOP
 
-            // Pass interval when starting the service
+            // Pass interval and idle timeout when starting the service
             if (enabled) {
-                serviceIntent.putExtra(FiverrLauncherService.EXTRA_INTERVAL, (launchIntervalSeconds * 1000).toLong())
+                val intervalSeconds = intervalOptions[selectedIntervalIndex]
+                val timeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
+                serviceIntent.putExtra(FiverrLauncherService.EXTRA_INTERVAL, (intervalSeconds * 1000).toLong())
+                serviceIntent.putExtra(FiverrLauncherService.EXTRA_IDLE_TIMEOUT, (timeoutSeconds * 1000).toLong())
             }
 
             if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -287,9 +306,11 @@ fun Root(modifier: Modifier = Modifier) {
         }
 
         // Update interval while service is running
-        fun updateInterval(intervalSeconds: Float, isUserInteracting: Boolean = false) {
+        fun updateInterval(intervalSeconds: Int, isUserInteracting: Boolean = false) {
             // Save to SharedPreferences
-            sharedPrefs.edit { putFloat("launch_interval", intervalSeconds) }
+            sharedPrefs.edit {
+                putLong("service_interval", (intervalSeconds * 1000).toLong())
+            }
 
             if (isEnabled) {
                 val serviceIntent = Intent(context, FiverrLauncherService::class.java)
@@ -303,6 +324,15 @@ fun Root(modifier: Modifier = Modifier) {
                 serviceIntent.putExtra(FiverrLauncherService.EXTRA_INTERVAL, (intervalSeconds * 1000).toLong())
                 context.startService(serviceIntent)
             }
+        }
+
+        // Update idle timeout while service is running
+        fun updateIdleTimeout(timeoutSeconds: Int) {
+            // Save to SharedPreferences
+            sharedPrefs.edit {
+                putLong("idle_timeout", (timeoutSeconds * 1000).toLong())
+            }
+            // Note: Idle timeout doesn't require service restart, it will be picked up on next pause/resume cycle
         }
 
         Column(
@@ -495,7 +525,7 @@ fun Root(modifier: Modifier = Modifier) {
 
             Spacer(modifier = Modifier.padding(8.dp))
 
-            // Launch Interval Slider
+            // Launch Interval Selector
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -513,36 +543,97 @@ fun Root(modifier: Modifier = Modifier) {
                     )
                     Spacer(modifier = Modifier.width(16.dp))
                     Column {
+                        val launchIntervalSeconds = intervalOptions[selectedIntervalIndex]
+                        val displayText = when {
+                            launchIntervalSeconds >= 60 -> "${launchIntervalSeconds / 60}m"
+                            else -> "${launchIntervalSeconds}s"
+                        }
                         Text(
-                            text = "Launch Interval: ${launchIntervalSeconds.toInt()} seconds",
+                            text = "Launch Interval: $displayText",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "Fiverr app will open every ${launchIntervalSeconds.toInt()} seconds",
+                            text = "Fiverr app will open every $displayText",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
                 Slider(
-                    value = launchIntervalSeconds,
+                    value = selectedIntervalIndex.toFloat(),
                     onValueChange = {
-                        // Round to nearest integer to avoid floating point issues
-                        launchIntervalSeconds = it.toInt().toFloat()
+                        selectedIntervalIndex = it.toInt()
+                        val intervalSeconds = intervalOptions[selectedIntervalIndex]
                         // Pause service while user is dragging slider
-                        updateInterval(launchIntervalSeconds, isUserInteracting = true)
+                        updateInterval(intervalSeconds, isUserInteracting = true)
                     },
                     onValueChangeFinished = {
                         // User released the slider - update interval and resume service
-                        updateInterval(launchIntervalSeconds, isUserInteracting = false)
+                        val intervalSeconds = intervalOptions[selectedIntervalIndex]
+                        updateInterval(intervalSeconds, isUserInteracting = false)
                     },
-                    valueRange = 3f..30f,
-                    steps = 26, // 27 values (3 to 30) means 26 steps between them
+                    valueRange = 0f..(intervalOptions.size - 1).toFloat(),
+                    steps = intervalOptions.size - 2, // Steps between discrete values
                     enabled = true
                 )
                 Text(
-                    text = "Range: 3-30 seconds",
+                    text = "Options: 5s, 10s, 30s, 1m, 3m, 5m, 10m, 30m",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.padding(8.dp))
+
+            // Idle Timeout Selector
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(vertical = 8.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Idle Timeout",
+                        modifier = Modifier.size(40.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        val idleTimeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
+                        val displayText = when {
+                            idleTimeoutSeconds >= 60 -> "${idleTimeoutSeconds / 60}m"
+                            else -> "${idleTimeoutSeconds}s"
+                        }
+                        Text(
+                            text = "Idle Timeout: $displayText",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Service resumes after $displayText of inactivity",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Slider(
+                    value = selectedIdleTimeoutIndex.toFloat(),
+                    onValueChange = {
+                        selectedIdleTimeoutIndex = it.toInt()
+                        val timeoutSeconds = idleTimeoutOptions[selectedIdleTimeoutIndex]
+                        updateIdleTimeout(timeoutSeconds)
+                    },
+                    valueRange = 0f..(idleTimeoutOptions.size - 1).toFloat(),
+                    steps = idleTimeoutOptions.size - 2, // Steps between discrete values
+                    enabled = true
+                )
+                Text(
+                    text = "Options: 5s, 10s, 30s, 1m, 2m, 5m",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
