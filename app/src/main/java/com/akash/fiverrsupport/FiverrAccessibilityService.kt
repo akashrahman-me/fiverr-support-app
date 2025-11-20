@@ -155,6 +155,10 @@ class FiverrAccessibilityService : AccessibilityService() {
         try {
             Log.d("nvm", "Attempting to clear Fiverr from recents (Android 13+ compatible)")
 
+            // Set automated gesture flag to ignore touch events during clearing process
+            TouchInteractionCallback.isAutomatedGestureActive = true
+            Log.d("nvm", "Set automated gesture flag for clearing Fiverr from recents")
+
             // Check if Fiverr is currently in foreground
             val currentPackage = ForegroundAppHolder.currentPackage
             val isFiverrInForeground = currentPackage == "com.fiverr.fiverr"
@@ -174,6 +178,8 @@ class FiverrAccessibilityService : AccessibilityService() {
                     }, 500)
                 } else {
                     Log.w("nvm", "Failed to press HOME button")
+                    // Clear flag on failure
+                    TouchInteractionCallback.isAutomatedGestureActive = false
                     callback(false)
                 }
             } else {
@@ -183,6 +189,8 @@ class FiverrAccessibilityService : AccessibilityService() {
 
         } catch (e: Exception) {
             Log.e("nvm", "Error clearing Fiverr from recents: ${e.message}", e)
+            // Clear flag on error
+            TouchInteractionCallback.isAutomatedGestureActive = false
             callback(false)
         }
     }
@@ -197,6 +205,8 @@ class FiverrAccessibilityService : AccessibilityService() {
 
             if (!recentsOpened) {
                 Log.w("nvm", "Failed to open recents screen")
+                // Clear flag on failure
+                TouchInteractionCallback.isAutomatedGestureActive = false
                 callback(false)
                 return
             }
@@ -212,6 +222,8 @@ class FiverrAccessibilityService : AccessibilityService() {
                         Log.w("nvm", "No root node found in recents screen")
                         // Close recents and return
                         performGlobalAction(GLOBAL_ACTION_BACK)
+                        // Clear flag on failure
+                        TouchInteractionCallback.isAutomatedGestureActive = false
                         callback(false)
                         return@postDelayed
                     }
@@ -259,11 +271,21 @@ class FiverrAccessibilityService : AccessibilityService() {
                                 // Wait a bit for dismissal animation, then close recents
                                 Handler(Looper.getMainLooper()).postDelayed({
                                     performGlobalAction(GLOBAL_ACTION_BACK)
+                                    // Clear automated gesture flag after recents is closed
+                                    Handler(Looper.getMainLooper()).postDelayed({
+                                        TouchInteractionCallback.isAutomatedGestureActive = false
+                                        Log.d("nvm", "Cleared automated gesture flag after clearing Fiverr from recents")
+                                    }, 200)
                                     callback(true)
                                 }, 300)
                             } else {
                                 Log.w("nvm", "Failed to swipe Fiverr card")
                                 performGlobalAction(GLOBAL_ACTION_BACK)
+                                // Clear flag after closing recents
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    TouchInteractionCallback.isAutomatedGestureActive = false
+                                    Log.d("nvm", "Cleared automated gesture flag after failed swipe")
+                                }, 200)
                                 callback(false)
                             }
                         }
@@ -271,18 +293,35 @@ class FiverrAccessibilityService : AccessibilityService() {
                         Log.d("nvm", "Fiverr not found in recents (already cleared or not opened)")
                         // Close recents
                         performGlobalAction(GLOBAL_ACTION_BACK)
+                        // Clear flag after closing recents
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            TouchInteractionCallback.isAutomatedGestureActive = false
+                            Log.d("nvm", "Cleared automated gesture flag - Fiverr not in recents")
+                        }, 200)
                         callback(true) // Consider success if already not in recents
                     }
 
                 } catch (e: Exception) {
                     Log.e("nvm", "Error finding Fiverr in recents: ${e.message}", e)
                     performGlobalAction(GLOBAL_ACTION_BACK)
+                    // Clear flag on error
+                    TouchInteractionCallback.isAutomatedGestureActive = false
                     callback(false)
                 }
             }, 1200) // Longer delay for Android 13 animation
 
+            // Safety timeout: clear flag after 5 seconds no matter what (in case callbacks fail)
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (TouchInteractionCallback.isAutomatedGestureActive) {
+                    Log.w("nvm", "Safety timeout: clearing automated gesture flag after 5 seconds")
+                    TouchInteractionCallback.isAutomatedGestureActive = false
+                }
+            }, 5000)
+
         } catch (e: Exception) {
             Log.e("nvm", "Error in clearFromRecentsViaSwipe: ${e.message}", e)
+            // Clear flag on error
+            TouchInteractionCallback.isAutomatedGestureActive = false
             callback(false)
         }
     }

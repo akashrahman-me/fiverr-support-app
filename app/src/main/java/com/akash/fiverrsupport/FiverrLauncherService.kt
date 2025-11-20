@@ -868,7 +868,7 @@ class FiverrLauncherService : Service() {
                             // Clear Fiverr from recents when going offline
                             val accessibilityService = FiverrAccessibilityService.getInstance()
                             if (accessibilityService != null && !isPaused && isRunning) {
-                                // Clear Fiverr first
+                                // Clear Fiverr first (callback runs on main thread)
                                 accessibilityService.clearFiverrFromRecents { success ->
                                     if (success) {
                                         Log.d("nvm", "Successfully cleared Fiverr from recents after internet loss")
@@ -876,15 +876,18 @@ class FiverrLauncherService : Service() {
                                         Log.w("nvm", "Failed to clear Fiverr from recents (may not be running)")
                                     }
 
-                                    // Then pause service
+                                    // Then pause service (already on main thread)
                                     if (!isPaused && isRunning) {
                                         pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
                                     }
                                 }
                             } else {
                                 // If accessibility not available or already paused, just pause
+                                // Post to main thread since onCapabilitiesChanged runs on background thread
                                 if (!isPaused && isRunning) {
-                                    pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                                    handler.post {
+                                        pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                                    }
                                 }
                             }
                         }
