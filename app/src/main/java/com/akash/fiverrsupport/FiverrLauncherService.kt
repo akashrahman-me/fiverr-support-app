@@ -171,12 +171,15 @@ class FiverrLauncherService : Service() {
                         val inCall = isInCall()
 
                         if (idleTime >= idleTimeout) {
-                            if (mediaPlaying) {
+                            if (!hasInternet) {
+                                Log.d("nvm", "Idle timeout met but device is offline - NOT resuming (waiting for internet)")
+                                // Idle checker will resume when internet comes back
+                            } else if (mediaPlaying) {
                                 Log.d("nvm", "Idle timeout met but media is playing - NOT resuming")
                             } else if (inCall) {
                                 Log.d("nvm", "Idle timeout met but in a call - NOT resuming")
                             } else {
-                                Log.d("nvm", "Auto-resuming service after unlock (idle timeout met: ${idleTime}ms)")
+                                Log.d("nvm", "Auto-resuming service after unlock (idle timeout met: ${idleTime}ms, internet available)")
                                 resumeService()
                             }
                         } else {
