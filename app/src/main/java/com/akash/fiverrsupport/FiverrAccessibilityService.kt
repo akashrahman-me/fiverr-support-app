@@ -149,12 +149,49 @@ class FiverrAccessibilityService : AccessibilityService() {
 
     /**
      * Clear Fiverr app from recent apps
-     * Opens recents and dismisses Fiverr to ensure fresh start
+     * For Android 13+, use a combination of BACK button and HOME to effectively clear the app
      */
     fun clearFiverrFromRecents(callback: (Boolean) -> Unit) {
         try {
-            Log.d("nvm", "Attempting to clear Fiverr from recents")
+            Log.d("nvm", "Attempting to clear Fiverr from recents (Android 13+ compatible)")
 
+            // Check if Fiverr is currently in foreground
+            val currentPackage = ForegroundAppHolder.currentPackage
+            val isFiverrInForeground = currentPackage == "com.fiverr.fiverr"
+
+            if (isFiverrInForeground) {
+                Log.d("nvm", "Fiverr is in foreground - pressing HOME to send it to background")
+
+                // Press HOME button to send Fiverr to background
+                val homePressed = performGlobalAction(GLOBAL_ACTION_HOME)
+
+                if (homePressed) {
+                    Log.d("nvm", "Successfully sent Fiverr to background via HOME")
+
+                    // Wait a bit for the transition, then clear from recents
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        clearFromRecentsViaSwipe(callback)
+                    }, 500)
+                } else {
+                    Log.w("nvm", "Failed to press HOME button")
+                    callback(false)
+                }
+            } else {
+                Log.d("nvm", "Fiverr not in foreground - attempting to clear from recents directly")
+                clearFromRecentsViaSwipe(callback)
+            }
+
+        } catch (e: Exception) {
+            Log.e("nvm", "Error clearing Fiverr from recents: ${e.message}", e)
+            callback(false)
+        }
+    }
+
+    /**
+     * Actually clear from recents using swipe gesture
+     */
+    private fun clearFromRecentsViaSwipe(callback: (Boolean) -> Unit) {
+        try {
             // Step 1: Open recents screen
             val recentsOpened = performGlobalAction(GLOBAL_ACTION_RECENTS)
 
@@ -166,7 +203,7 @@ class FiverrAccessibilityService : AccessibilityService() {
 
             Log.d("nvm", "Opened recents screen, waiting for UI to settle")
 
-            // Step 2: Wait for recents UI to fully load
+            // Step 2: Wait for recents UI to fully load (longer delay for Android 13)
             Handler(Looper.getMainLooper()).postDelayed({
                 try {
                     // Step 3: Find and dismiss Fiverr from recents
@@ -189,20 +226,41 @@ class FiverrAccessibilityService : AccessibilityService() {
                         val rect = Rect()
                         fiverrCard.getBoundsInScreen(rect)
 
-                        // Swipe up to dismiss (center of card, swipe up)
+                        Log.d("nvm", "Fiverr card bounds: left=${rect.left}, top=${rect.top}, right=${rect.right}, bottom=${rect.bottom}")
+
+                        // Get screen width to determine which column the card is in
+                        val displayMetrics = resources.displayMetrics
+                        val screenWidth = displayMetrics.widthPixels
+                        val screenCenterX = screenWidth / 2
+
+                        // Determine if card is in left or right column
+                        val cardCenterX = rect.centerX()
+                        val isLeftColumn = cardCenterX < screenCenterX
+
+                        Log.d("nvm", "Screen width: $screenWidth, Screen center: $screenCenterX, Card center: $cardCenterX, Is left column: $isLeftColumn")
+
+                        // MIUI recents: swipe left for left column, swipe right for right column
                         val startX = rect.centerX().toFloat()
                         val startY = rect.centerY().toFloat()
-                        val endY = 0f // Swipe to top
+                        val endX = if (isLeftColumn) {
+                            // Left column - swipe left (to the edge)
+                            0f
+                        } else {
+                            // Right column - swipe right (to the edge)
+                            screenWidth.toFloat()
+                        }
+                        val endY = startY // Same Y position (horizontal swipe)
 
-                        performSwipeGesture(startX, startY, startX, endY) { success ->
-                            // Don't recycle here - will be recycled at the end
+                        Log.d("nvm", "Performing ${if (isLeftColumn) "LEFT" else "RIGHT"} swipe: ($startX, $startY) -> ($endX, $endY)")
+
+                        performSwipeGesture(startX, startY, endX, endY) { success ->
                             if (success) {
-                                Log.d("nvm", "Successfully cleared Fiverr from recents")
-                                // Close recents screen
+                                Log.d("nvm", "Successfully swiped Fiverr card")
+                                // Wait a bit for dismissal animation, then close recents
                                 Handler(Looper.getMainLooper()).postDelayed({
                                     performGlobalAction(GLOBAL_ACTION_BACK)
-                                }, 200)
-                                callback(true)
+                                    callback(true)
+                                }, 300)
                             } else {
                                 Log.w("nvm", "Failed to swipe Fiverr card")
                                 performGlobalAction(GLOBAL_ACTION_BACK)
@@ -221,26 +279,27 @@ class FiverrAccessibilityService : AccessibilityService() {
                     performGlobalAction(GLOBAL_ACTION_BACK)
                     callback(false)
                 }
-            }, 800) // Wait for recents animation to complete
+            }, 1200) // Longer delay for Android 13 animation
 
         } catch (e: Exception) {
-            Log.e("nvm", "Error clearing Fiverr from recents: ${e.message}", e)
+            Log.e("nvm", "Error in clearFromRecentsViaSwipe: ${e.message}", e)
             callback(false)
         }
     }
 
     /**
-     * Find Fiverr app card in recents screen
+     * Find Fiverr app card in recents screen (Android 13+ compatible)
      */
     private fun findFiverrInRecents(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        // Check if this node or its children contain "Fiverr" or package name
+        // Method 1: Check package name
         if (node.packageName?.toString()?.contains("fiverr", ignoreCase = true) == true) {
-            // Found a node related to Fiverr
+            Log.d("nvm", "Found node with Fiverr package: ${node.packageName}, class: ${node.className}")
             // Try to find the parent card that can be dismissed
             var parent = node.parent
             var depth = 0
-            while (parent != null && depth < 5) {
+            while (parent != null && depth < 10) { // Increased depth for Android 13
                 if (parent.isClickable || parent.isDismissable) {
+                    Log.d("nvm", "Found dismissable parent at depth $depth")
                     return parent
                 }
                 parent = parent.parent
@@ -249,41 +308,80 @@ class FiverrAccessibilityService : AccessibilityService() {
             return node
         }
 
+        // Method 2: Check text content (app name might be "Fiverr")
+        node.text?.let { text ->
+            if (text.toString().contains("Fiverr", ignoreCase = true)) {
+                Log.d("nvm", "Found node with 'Fiverr' text: $text")
+                var parent = node.parent
+                var depth = 0
+                while (parent != null && depth < 10) {
+                    if (parent.isClickable || parent.isDismissable) {
+                        Log.d("nvm", "Found dismissable parent at depth $depth (via text)")
+                        return parent
+                    }
+                    parent = parent.parent
+                    depth++
+                }
+                return node
+            }
+        }
+
+        // Method 3: Check content description
+        node.contentDescription?.let { desc ->
+            if (desc.toString().contains("Fiverr", ignoreCase = true)) {
+                Log.d("nvm", "Found node with 'Fiverr' in content description: $desc")
+                var parent = node.parent
+                var depth = 0
+                while (parent != null && depth < 10) {
+                    if (parent.isClickable || parent.isDismissable) {
+                        Log.d("nvm", "Found dismissable parent at depth $depth (via contentDescription)")
+                        return parent
+                    }
+                    parent = parent.parent
+                    depth++
+                }
+                return node
+            }
+        }
+
         // Recursively search children
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             val result = findFiverrInRecents(child)
             if (result != null) {
-                child.recycle()
                 return result
             }
-            child.recycle()
         }
 
         return null
     }
 
     /**
-     * Perform a swipe gesture
+     * Perform a swipe gesture (optimized for Android 13)
      */
     private fun performSwipeGesture(startX: Float, startY: Float, endX: Float, endY: Float, callback: (Boolean) -> Unit) {
         try {
+            Log.d("nvm", "Performing swipe: ($startX, $startY) -> ($endX, $endY)")
+
             val path = Path()
             path.moveTo(startX, startY)
             path.lineTo(endX, endY)
 
             val gestureBuilder = GestureDescription.Builder()
-            val gestureStroke = GestureDescription.StrokeDescription(path, 0, 250) // 250ms swipe
+            // Faster swipe for better dismissal on Android 13 (150ms instead of 250ms)
+            val gestureStroke = GestureDescription.StrokeDescription(path, 0, 150)
             gestureBuilder.addStroke(gestureStroke)
 
             val result = dispatchGesture(
                 gestureBuilder.build(),
                 object : GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
+                        Log.d("nvm", "Swipe gesture completed")
                         callback(true)
                     }
 
                     override fun onCancelled(gestureDescription: GestureDescription?) {
+                        Log.w("nvm", "Swipe gesture cancelled")
                         callback(false)
                     }
                 },
@@ -291,6 +389,7 @@ class FiverrAccessibilityService : AccessibilityService() {
             )
 
             if (!result) {
+                Log.w("nvm", "Failed to dispatch swipe gesture")
                 callback(false)
             }
         } catch (e: Exception) {

@@ -855,40 +855,37 @@ class FiverrLauncherService : Service() {
                         Log.d("nvm", "Network state changed: hasInternet = $hasInternet")
 
                         if (hasInternet) {
-                            Log.d("nvm", "Internet connected - clearing Fiverr from recents for fresh start")
+                            Log.d("nvm", "Internet reconnected - resuming service for regular operation")
 
-                            // Clear Fiverr from recents to ensure fresh start after reconnection
-                            val accessibilityService = FiverrAccessibilityService.getInstance()
-                            if (accessibilityService != null) {
-                                // Always clear Fiverr, regardless of current foreground app
-                                handler.postDelayed({
-                                    accessibilityService.clearFiverrFromRecents { success ->
-                                        if (success) {
-                                            Log.d("nvm", "Successfully cleared Fiverr from recents after internet reconnection")
-                                        } else {
-                                            Log.w("nvm", "Failed to clear Fiverr from recents (may not be running)")
-                                        }
-
-                                        // Auto-resume service immediately after clearing Fiverr
-                                        if (isPaused && isRunning) {
-                                            Log.d("nvm", "Internet restored - auto-resuming service to launch fresh Fiverr")
-                                            resumeService()
-                                        }
-                                    }
-                                }, 500) // Small delay to ensure network is stable
-                            } else {
-                                Log.w("nvm", "Accessibility service not available to clear Fiverr")
-                                // Still resume even if we can't clear
-                                if (isPaused && isRunning) {
-                                    Log.d("nvm", "Internet restored - auto-resuming service")
-                                    resumeService()
-                                }
+                            // Auto-resume service immediately - will do regular task (open Fiverr or pull-down)
+                            if (isPaused && isRunning) {
+                                Log.d("nvm", "Internet restored - auto-resuming service")
+                                resumeService()
                             }
                         } else {
-                            Log.d("nvm", "Internet lost - pausing service")
-                            if (!isPaused && isRunning) {
-                                // Don't start idle checker for internet loss - network callback will auto-resume
-                                pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                            Log.d("nvm", "Internet lost - clearing Fiverr from recents, then pausing service")
+
+                            // Clear Fiverr from recents when going offline
+                            val accessibilityService = FiverrAccessibilityService.getInstance()
+                            if (accessibilityService != null && !isPaused && isRunning) {
+                                // Clear Fiverr first
+                                accessibilityService.clearFiverrFromRecents { success ->
+                                    if (success) {
+                                        Log.d("nvm", "Successfully cleared Fiverr from recents after internet loss")
+                                    } else {
+                                        Log.w("nvm", "Failed to clear Fiverr from recents (may not be running)")
+                                    }
+
+                                    // Then pause service
+                                    if (!isPaused && isRunning) {
+                                        pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                                    }
+                                }
+                            } else {
+                                // If accessibility not available or already paused, just pause
+                                if (!isPaused && isRunning) {
+                                    pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                                }
                             }
                         }
                     }
@@ -897,10 +894,29 @@ class FiverrLauncherService : Service() {
                 override fun onLost(network: android.net.Network) {
                     Log.d("nvm", "Network lost: $network")
                     hasInternet = false
-                    Log.d("nvm", "Internet lost - pausing service")
-                    if (!isPaused && isRunning) {
-                        // Don't start idle checker for internet loss - network callback will auto-resume
-                        pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                    Log.d("nvm", "Internet lost - clearing Fiverr from recents, then pausing service")
+
+                    // Clear Fiverr from recents when going offline
+                    val accessibilityService = FiverrAccessibilityService.getInstance()
+                    if (accessibilityService != null && !isPaused && isRunning) {
+                        // Clear Fiverr first
+                        accessibilityService.clearFiverrFromRecents { success ->
+                            if (success) {
+                                Log.d("nvm", "Successfully cleared Fiverr from recents after internet loss (onLost)")
+                            } else {
+                                Log.w("nvm", "Failed to clear Fiverr from recents (may not be running)")
+                            }
+
+                            // Then pause service
+                            if (!isPaused && isRunning) {
+                                pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                            }
+                        }
+                    } else {
+                        // If accessibility not available or already paused, just pause
+                        if (!isPaused && isRunning) {
+                            pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                        }
                     }
                 }
             }
