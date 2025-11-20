@@ -961,23 +961,40 @@ class FiverrLauncherService : Service() {
                         Log.d("nvm", "Network state changed: hasInternet = $hasInternet")
 
                         if (hasInternet) {
-                            Log.d("nvm", "Internet reconnected - resuming service for regular operation")
+                            Log.d("nvm", "Internet reconnected - checking if should auto-resume")
 
-                            // Auto-resume service immediately - will do regular task (open Fiverr or pull-down)
-                            // IMPORTANT: Post to main thread since onCapabilitiesChanged runs on background thread
+                            // Auto-resume ONLY if service was paused by internet loss
+                            // If paused by user interaction, let idle checker handle resume
                             // ALSO: Don't resume if screen is off - wait for unlock
-                            if (isPaused && isRunning && isScreenOn) {
-                                Log.d("nvm", "Internet restored and screen ON - auto-resuming service")
+                            if (isPaused && isRunning && isPausedByInternetLoss && isScreenOn) {
+                                Log.d("nvm", "Internet restored, screen ON, was paused by internet loss - auto-resuming service")
                                 handler.post {
                                     resumeService()
                                 }
-                            } else if (isPaused && isRunning && !isScreenOn) {
+                            } else if (isPaused && isRunning && isPausedByInternetLoss && !isScreenOn) {
                                 Log.d("nvm", "Internet restored but screen is OFF - NOT resuming (will resume on unlock)")
+                            } else if (isPaused && isRunning && !isPausedByInternetLoss) {
+                                Log.d("nvm", "Internet restored but service was paused by user interaction - idle checker will handle resume")
                             }
                         } else {
-                            Log.d("nvm", "Internet lost - clearing Fiverr from recents, then pausing service")
+                            Log.d("nvm", "Internet lost - handling service pause")
 
-                            // Clear Fiverr from recents when going offline
+                            // If service is already paused by user interaction, mark it as paused by internet loss too
+                            if (isPaused && isRunning && !isPausedByInternetLoss) {
+                                handler.post {
+                                    Log.d("nvm", "Service already paused by user - marking as paused by internet loss (will wait for internet)")
+                                    isPausedByInternetLoss = true
+
+                                    // Update SharedPreferences
+                                    val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+                                    prefs.edit()
+                                        .putBoolean("paused_by_internet_loss", true)
+                                        .apply()
+                                }
+                                return@onCapabilitiesChanged
+                            }
+
+                            // Clear Fiverr from recents when going offline (only if not already paused)
                             val accessibilityService = FiverrAccessibilityService.getInstance()
                             if (accessibilityService != null && !isPaused && isRunning) {
                                 // Clear Fiverr first (callback runs on main thread)
@@ -1009,9 +1026,24 @@ class FiverrLauncherService : Service() {
                 override fun onLost(network: android.net.Network) {
                     Log.d("nvm", "Network lost: $network")
                     hasInternet = false
-                    Log.d("nvm", "Internet lost - clearing Fiverr from recents, then pausing service")
+                    Log.d("nvm", "Internet lost - handling service pause")
 
-                    // Clear Fiverr from recents when going offline
+                    // If service is already paused by user interaction, mark it as paused by internet loss too
+                    if (isPaused && isRunning && !isPausedByInternetLoss) {
+                        handler.post {
+                            Log.d("nvm", "Service already paused by user - marking as paused by internet loss (will wait for internet)")
+                            isPausedByInternetLoss = true
+
+                            // Update SharedPreferences
+                            val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+                            prefs.edit()
+                                .putBoolean("paused_by_internet_loss", true)
+                                .apply()
+                        }
+                        return
+                    }
+
+                    // Clear Fiverr from recents when going offline (only if not already paused)
                     val accessibilityService = FiverrAccessibilityService.getInstance()
                     if (accessibilityService != null && !isPaused && isRunning) {
                         // Clear Fiverr first (callback already runs on main thread)
