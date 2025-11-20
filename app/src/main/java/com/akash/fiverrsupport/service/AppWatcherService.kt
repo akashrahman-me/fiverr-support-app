@@ -1,6 +1,7 @@
 package com.akash.fiverrsupport.service
 
 import android.accessibilityservice.AccessibilityService
+import android.annotation.SuppressLint
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 
@@ -15,6 +16,7 @@ object ForegroundAppHolder {
  * Accessibility service that monitors foreground app changes
  * More efficient than UsageStatsManager for real-time detection
  */
+@SuppressLint("AccessibilityPolicy")
 class AppWatcherService : AccessibilityService() {
 
     override fun onServiceConnected() {

@@ -335,21 +335,58 @@ class FiverrLauncherService : Service() {
             val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
             val wasEnabled = prefs.getBoolean("service_enabled", false)
             val savedInterval = prefs.getLong("service_interval", 20000L)
+            val wasPaused = prefs.getBoolean("service_paused", false)
+            val savedPausedTime = prefs.getLong("paused_time_ms", 0L)
+            val wasPausedByInternetLoss = prefs.getBoolean("paused_by_internet_loss", false)
 
             if (wasEnabled) {
-                Log.d("nvm", "Restoring service with interval: ${savedInterval}ms")
+                Log.d("nvm", "Restoring service with interval: ${savedInterval}ms, wasPaused=$wasPaused, pausedTime=${savedPausedTime}ms")
                 launchInterval = savedInterval
                 startForegroundServiceInternal()
                 isRunning = true
-                handler.post(launchRunnable)
+
                 createOverlay()
                 acquireWakeLock()
-                Log.d("nvm", "Service restored successfully")
 
-                // Reduce brightness when service is restored (if screen is on)
-                if (isScreenOn) {
-                    Log.d("nvm", "Reducing brightness on service restore")
-                    reduceBrightness()
+                // If service was paused when process died, restore the paused state
+                if (wasPaused && savedPausedTime > 0) {
+                    isPaused = true
+                    isPausedByInternetLoss = wasPausedByInternetLoss
+
+                    // Start timer with full interval, then restore it to the paused position
+                    overlayView?.startTimer(launchInterval)
+                    overlayView?.restorePausedState(savedPausedTime)
+
+                    Log.d("nvm", "Restored paused state: pausedAt=${savedPausedTime}ms, byInternetLoss=$isPausedByInternetLoss")
+
+                    // If paused by internet loss, keep brightness low and don't schedule anything
+                    if (isPausedByInternetLoss) {
+                        Log.d("nvm", "Was paused by internet loss - keeping brightness low, NOT scheduling any callbacks (waiting for network)")
+                        if (isScreenOn) {
+                            reduceBrightness()
+                        }
+                        // DO NOT schedule launchRunnable or idle checker - wait for network callback to resume
+                    } else {
+                        // Paused by user touch - restore brightness and start idle checker
+                        Log.d("nvm", "Was paused by user touch - starting idle checker, NOT scheduling launchRunnable yet")
+                        if (isScreenOn) {
+                            reduceBrightness()
+                        }
+                        // Set lastUserInteractionTime so idle checker works correctly
+                        lastUserInteractionTime = System.currentTimeMillis()
+                        handler.post(idleCheckerRunnable)
+                        // DO NOT schedule launchRunnable yet - idle checker will call resumeService() which will schedule it
+                    }
+                } else {
+                    // Service was NOT paused, start normally
+                    handler.post(launchRunnable)
+                    Log.d("nvm", "Service restored successfully (not paused)")
+
+                    // Reduce brightness when service is restored (if screen is on)
+                    if (isScreenOn) {
+                        Log.d("nvm", "Reducing brightness on service restore")
+                        reduceBrightness()
+                    }
                 }
 
                 // Check if screen is off and start vibration if needed
@@ -712,6 +749,16 @@ class FiverrLauncherService : Service() {
         handler.removeCallbacks(launchRunnable)
         Log.d("nvm", "Removed pending launchRunnable callbacks when pausing")
 
+        // Save paused state to SharedPreferences (survives process death)
+        val pausedTimeMs = overlayView?.getPausedTime() ?: 0L
+        val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+        prefs.edit()
+            .putBoolean("service_paused", true)
+            .putLong("paused_time_ms", pausedTimeMs)
+            .putBoolean("paused_by_internet_loss", isPausedByInternetLoss)
+            .apply()
+        Log.d("nvm", "Saved paused state: pausedTime=${pausedTimeMs}ms, byInternetLoss=$isPausedByInternetLoss")
+
         // Restore brightness only for user interaction (not for internet loss)
         if (shouldRestoreBrightness) {
             restoreBrightness()
@@ -743,6 +790,16 @@ class FiverrLauncherService : Service() {
 
         isPaused = false
         isPausedByInternetLoss = false // Clear internet loss flag
+
+        // Clear saved paused state from SharedPreferences
+        val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+        prefs.edit()
+            .putBoolean("service_paused", false)
+            .remove("paused_time_ms")
+            .remove("paused_by_internet_loss")
+            .apply()
+        Log.d("nvm", "Cleared saved paused state from SharedPreferences")
+
         Log.d("nvm", "resumeService() - AFTER isPaused=false: isRunning=$isRunning, isPaused=$isPaused")
 
         handler.removeCallbacks(idleCheckerRunnable) // Stop idle checker
@@ -858,9 +915,12 @@ class FiverrLauncherService : Service() {
                             Log.d("nvm", "Internet reconnected - resuming service for regular operation")
 
                             // Auto-resume service immediately - will do regular task (open Fiverr or pull-down)
+                            // IMPORTANT: Post to main thread since onCapabilitiesChanged runs on background thread
                             if (isPaused && isRunning) {
                                 Log.d("nvm", "Internet restored - auto-resuming service")
-                                resumeService()
+                                handler.post {
+                                    resumeService()
+                                }
                             }
                         } else {
                             Log.d("nvm", "Internet lost - clearing Fiverr from recents, then pausing service")
@@ -902,7 +962,7 @@ class FiverrLauncherService : Service() {
                     // Clear Fiverr from recents when going offline
                     val accessibilityService = FiverrAccessibilityService.getInstance()
                     if (accessibilityService != null && !isPaused && isRunning) {
-                        // Clear Fiverr first
+                        // Clear Fiverr first (callback already runs on main thread)
                         accessibilityService.clearFiverrFromRecents { success ->
                             if (success) {
                                 Log.d("nvm", "Successfully cleared Fiverr from recents after internet loss (onLost)")
@@ -910,15 +970,18 @@ class FiverrLauncherService : Service() {
                                 Log.w("nvm", "Failed to clear Fiverr from recents (may not be running)")
                             }
 
-                            // Then pause service
+                            // Then pause service (already on main thread via callback)
                             if (!isPaused && isRunning) {
                                 pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
                             }
                         }
                     } else {
                         // If accessibility not available or already paused, just pause
+                        // Post to main thread since onLost runs on background thread
                         if (!isPaused && isRunning) {
-                            pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                            handler.post {
+                                pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                            }
                         }
                     }
                 }
@@ -1294,6 +1357,15 @@ class CircularTimerView(context: android.content.Context) : View(context) {
             isPaused = false
             Log.d("nvm", "Timer resumed but no saved pause time - just unpausing")
         }
+        invalidate()
+    }
+
+    fun restorePausedState(elapsedTimeMs: Long) {
+        // Restore the paused time from saved state (after process death)
+        pausedTime = elapsedTimeMs
+        startTime = System.currentTimeMillis() - elapsedTimeMs
+        isPaused = true
+        Log.d("nvm", "Timer state restored: pausedAt=${pausedTime}ms, remaining=${(totalDuration - pausedTime) / 1000}s")
         invalidate()
     }
 
