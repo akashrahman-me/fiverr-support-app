@@ -1230,7 +1230,13 @@ class FiverrLauncherService : Service() {
     // Helper to start both vibration engines
     private fun startVibrationAlert() {
         try {
-            Log.d("nvm", "startVibrationAlert() called - isRunning: $isRunning, isScreenOn: $isScreenOn")
+            // Always start the service to wake screen (vibration is controlled inside the service)
+            val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+            val isVibrationEnabled = prefs.getBoolean("vibrate_on_screen_off", false)
+
+            Log.d("nvm", "startVibrationAlert() called - isRunning: $isRunning, isScreenOn: $isScreenOn, vibrationEnabled: $isVibrationEnabled")
+            Log.d("nvm", "Starting wake service (screen will wake up, vibration depends on user setting)")
+
             if (isRunning) {
                 isVibrationServiceRunning = true // Set flag BEFORE starting service
                 val serviceIntent = Intent(this, VibrationService::class.java)
@@ -1239,7 +1245,7 @@ class FiverrLauncherService : Service() {
                 } else {
                     startService(serviceIntent)
                 }
-                Log.d("nvm", "Started VibrationService via ${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) "startForegroundService" else "startService"}")
+                Log.d("nvm", "Started VibrationService (wake + optional vibration) via ${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) "startForegroundService" else "startService"}")
             } else {
                 Log.w("nvm", "Cannot start VibrationService - isRunning is false")
             }
