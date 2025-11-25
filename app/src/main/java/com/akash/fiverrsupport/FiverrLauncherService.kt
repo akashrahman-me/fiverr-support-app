@@ -129,15 +129,16 @@ class FiverrLauncherService : Service() {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     isScreenOn = false
-                    Log.d("nvm", "Screen turned OFF")
+                    Log.d("nvm", "🔒 Screen turned OFF - isPaused=$isPaused, isRunning=$isRunning, lastUserInteractionTime=$lastUserInteractionTime")
 
                     // Pause the service (like touch does) but without idle checker
                     // We'll resume after unlock instead
                     if (!isPaused && isRunning) {
-                        // Reset lastUserInteractionTime to 0 to mark this as "paused by screen lock"
+                        // Service was running - pause it and mark as screen-locked
                         lastUserInteractionTime = 0
+                        Log.d("nvm", "Screen lock detected (service was running) - pausing service (lastUserInteractionTime=0, startIdleChecker=false)")
                         pauseService(startIdleChecker = false) // Don't start idle checker for screen lock
-                        Log.d("nvm", "Service paused due to screen lock (lastUserInteractionTime reset to 0)")
+                        Log.d("nvm", "Service paused due to screen lock - ready for instant resume on unlock")
 
                         // Start vibration alert only if NOT paused by internet loss
                         startVibrationAlert()
@@ -147,15 +148,31 @@ class FiverrLauncherService : Service() {
                     } else if (!isPaused && !isRunning) {
                         // Service is stopped - don't vibrate
                         Log.d("nvm", "Screen turned OFF but service is not running - NOT starting vibration")
-                    } else {
-                        // Service is paused for other reasons (user touch) - start vibration
+                    } else if (isPaused && isRunning) {
+                        // Service is already paused (by user touch) - convert to screen-lock pause
+                        Log.d("nvm", "Screen turned OFF while already paused (was paused by touch) - converting to screen-lock pause")
+
+                        // CRITICAL: Reset lastUserInteractionTime to 0 to mark as screen-locked
+                        lastUserInteractionTime = 0
+
+                        // Stop idle checker since we'll resume on unlock instead
+                        handler.removeCallbacks(idleCheckerRunnable)
+
+                        // Update pause reason in SharedPreferences
+                        val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+                        prefs.edit().putBoolean("paused_by_internet_loss", false).apply()
+
+                        Log.d("nvm", "Converted to screen-lock pause - lastUserInteractionTime reset to 0, idle checker stopped")
+
+                        // Start vibration
                         startVibrationAlert()
                     }
                 }
                 Intent.ACTION_USER_PRESENT -> {
                     // USER_PRESENT fires when user unlocks the device (most reliable)
                     isScreenOn = true
-                    Log.d("nvm", "USER_PRESENT received - user unlocked device")
+                    Log.d("nvm", "🔓 USER_PRESENT received - user unlocked device")
+                    Log.d("nvm", "📊 State: isPaused=$isPaused, isRunning=$isRunning, lastUserInteractionTime=$lastUserInteractionTime")
 
                     // Stop vibration
                     if (isVibrationServiceRunning) {
@@ -187,65 +204,46 @@ class FiverrLauncherService : Service() {
                             // Don't resume - let idle checker continue
                         }
                     } else if (isPaused && isRunning && lastUserInteractionTime == 0L) {
-                        // Service was paused by screen lock (not touch), so resume instantly
-                        // But still check for media playback, calls, and internet
+                        // Service was paused by screen lock (not touch), so resume conditionally
+                        val mediaPlaying = isMediaPlaying()
+                        val inCall = isInCall()
 
-                        // Check if paused by internet loss but internet is now back
-                        if (isPausedByInternetLoss && hasInternet) {
-                            Log.d("nvm", "Screen unlocked, was paused by internet loss but internet is now back - resuming service")
-                            val mediaPlaying = isMediaPlaying()
-                            val inCall = isInCall()
-                            if (mediaPlaying) {
-                                Log.d("nvm", "Internet is back but media is playing - NOT resuming, starting idle checker")
-                                lastUserInteractionTime = System.currentTimeMillis()
-                                handler.post(idleCheckerRunnable)
-                            } else if (inCall) {
-                                Log.d("nvm", "Internet is back but in a call - NOT resuming, starting idle checker")
-                                lastUserInteractionTime = System.currentTimeMillis()
-                                handler.post(idleCheckerRunnable)
-                            } else {
-                                resumeService()
-                            }
-                        } else if (isPausedByInternetLoss) {
-                            Log.d("nvm", "Screen unlocked but service is paused by internet loss - NOT resuming (waiting for network)")
-                        } else {
-                            val mediaPlaying = isMediaPlaying()
-                            val inCall = isInCall()
-                            if (!hasInternet) {
+                        Log.d("nvm", "Screen unlock detected (via USER_PRESENT) - checking conditions: hasInternet=$hasInternet, mediaPlaying=$mediaPlaying, inCall=$inCall")
+
+                        when {
+                            !hasInternet ->
                                 Log.d("nvm", "Screen unlocked but no internet - NOT resuming (waiting for network)")
-                            } else if (mediaPlaying) {
-                                Log.d("nvm", "Screen unlocked but media is playing - NOT resuming, starting idle checker")
-                                // Start idle checker to wait for media to stop
-                                lastUserInteractionTime = System.currentTimeMillis()
-                                handler.post(idleCheckerRunnable)
-                            } else if (inCall) {
-                                Log.d("nvm", "Screen unlocked but in a call - NOT resuming, starting idle checker")
-                                // Start idle checker to wait for call to end
-                                lastUserInteractionTime = System.currentTimeMillis()
-                                handler.post(idleCheckerRunnable)
-                            } else {
-                                Log.d("nvm", "Auto-resuming service instantly after unlock (paused by screen lock)")
+                            mediaPlaying ->
+                                Log.d("nvm", "Screen unlocked but media is playing - NOT resuming until media stops")
+                            inCall ->
+                                Log.d("nvm", "Screen unlocked but call is active - NOT resuming until call ends")
+                            else -> {
+                                Log.d("nvm", "✅ Auto-resuming service INSTANTLY after screen unlock - all conditions satisfied!")
                                 resumeService()
                             }
                         }
                     } else {
-                        Log.d("nvm", "Resume not needed (isPaused=$isPaused, isRunning=$isRunning)")
+                        Log.d("nvm", "Resume not needed (isPaused=$isPaused, isRunning=$isRunning, lastUserInteractionTime=$lastUserInteractionTime)")
                     }
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     isScreenOn = true
+                    Log.d("nvm", "💡 Screen turned ON - waiting 500ms for keyguard state...")
 
                     // Use a short delay to let keyguard state settle
                     handler.postDelayed({
                         val keyguardManager = getSystemService(KEYGUARD_SERVICE) as android.app.KeyguardManager
                         val isLocked = keyguardManager.isKeyguardLocked
 
-                        Log.d("nvm", "Screen turned ON - isLocked: $isLocked, isVibrationServiceRunning: $isVibrationServiceRunning")
+                        Log.d("nvm", "💡 Screen ON settled - isLocked: $isLocked, isVibrationServiceRunning: $isVibrationServiceRunning")
+                        Log.d("nvm", "📊 State: isPaused=$isPaused, isRunning=$isRunning, lastUserInteractionTime=$lastUserInteractionTime")
 
-                        if (!isLocked && isVibrationServiceRunning) {
-                            // Screen is ON and unlocked - stop vibration
-                            Log.d("nvm", "Screen unlocked (via SCREEN_ON) - stopping vibration alert")
-                            stopVibrationAlert()
+                        if (!isLocked) {
+                            // Screen is ON and unlocked - stop vibration if running
+                            if (isVibrationServiceRunning) {
+                                Log.d("nvm", "Screen unlocked (via SCREEN_ON) - stopping vibration alert")
+                                stopVibrationAlert()
+                            }
 
                             // Check if user was paused by touch interaction
                             if (isPaused && isRunning && lastUserInteractionTime > 0) {
@@ -266,44 +264,26 @@ class FiverrLauncherService : Service() {
                                     Log.d("nvm", "Not resuming yet (via SCREEN_ON) - only ${idleTime}ms idle, need ${idleTimeout}ms")
                                 }
                             } else if (isPaused && isRunning && lastUserInteractionTime == 0L) {
-                                // Service was paused by screen lock (not touch), check media, calls, and internet
+                                // Service was paused by screen lock (not touch), so resume conditionally
+                                val mediaPlaying = isMediaPlaying()
+                                val inCall = isInCall()
 
-                                // Check if paused by internet loss but internet is now back
-                                if (isPausedByInternetLoss && hasInternet) {
-                                    Log.d("nvm", "Screen unlocked (via SCREEN_ON), was paused by internet loss but internet is now back - resuming service")
-                                    val mediaPlaying = isMediaPlaying()
-                                    val inCall = isInCall()
-                                    if (mediaPlaying) {
-                                        Log.d("nvm", "Internet is back but media is playing (via SCREEN_ON) - NOT resuming, starting idle checker")
-                                        lastUserInteractionTime = System.currentTimeMillis()
-                                        handler.post(idleCheckerRunnable)
-                                    } else if (inCall) {
-                                        Log.d("nvm", "Internet is back but in a call (via SCREEN_ON) - NOT resuming, starting idle checker")
-                                        lastUserInteractionTime = System.currentTimeMillis()
-                                        handler.post(idleCheckerRunnable)
-                                    } else {
-                                        resumeService()
-                                    }
-                                } else if (isPausedByInternetLoss) {
-                                    Log.d("nvm", "Screen unlocked (via SCREEN_ON) but service is paused by internet loss - NOT resuming (waiting for network)")
-                                } else {
-                                    val mediaPlaying = isMediaPlaying()
-                                    val inCall = isInCall()
-                                    if (!hasInternet) {
-                                        Log.d("nvm", "Screen unlocked (via SCREEN_ON) but no internet - NOT resuming (waiting for network)")
-                                    } else if (mediaPlaying) {
-                                        Log.d("nvm", "Screen unlocked (via SCREEN_ON) but media is playing - NOT resuming, starting idle checker")
-                                        lastUserInteractionTime = System.currentTimeMillis()
-                                        handler.post(idleCheckerRunnable)
-                                    } else if (inCall) {
-                                        Log.d("nvm", "Screen unlocked (via SCREEN_ON) but in a call - NOT resuming, starting idle checker")
-                                        lastUserInteractionTime = System.currentTimeMillis()
-                                        handler.post(idleCheckerRunnable)
-                                    } else {
-                                        Log.d("nvm", "Auto-resuming service instantly after unlock (via SCREEN_ON, paused by screen lock)")
+                                Log.d("nvm", "Screen unlock detected (via SCREEN_ON) - checking conditions: hasInternet=$hasInternet, mediaPlaying=$mediaPlaying, inCall=$inCall")
+
+                                when {
+                                    !hasInternet ->
+                                        Log.d("nvm", "Screen unlocked (via SCREEN_ON) but no internet - NOT resuming")
+                                    mediaPlaying ->
+                                        Log.d("nvm", "Screen unlocked (via SCREEN_ON) but media playing - NOT resuming until media stops")
+                                    inCall ->
+                                        Log.d("nvm", "Screen unlocked (via SCREEN_ON) but call active - NOT resuming until call ends")
+                                    else -> {
+                                        Log.d("nvm", "Auto-resuming service instantly after unlock (via SCREEN_ON, all conditions satisfied)")
                                         resumeService()
                                     }
                                 }
+                            } else {
+                                Log.d("nvm", "Screen unlocked but resume not applicable (isPaused=$isPaused, isRunning=$isRunning, lastUserInteractionTime=$lastUserInteractionTime)")
                             }
                         } else if (isLocked) {
                             // Screen on but still locked (wake lock keeping it on for vibration)
@@ -790,6 +770,8 @@ class FiverrLauncherService : Service() {
 
     // Pause the service (stop opening Fiverr, turn timer red)
     private fun pauseService(startIdleChecker: Boolean = true, shouldRestoreBrightness: Boolean = true) {
+        Log.d("nvm", "pauseService() called - startIdleChecker=$startIdleChecker, shouldRestoreBrightness=$shouldRestoreBrightness, lastUserInteractionTime=$lastUserInteractionTime")
+
         isPaused = true
 
         // Track if this pause is due to internet loss
