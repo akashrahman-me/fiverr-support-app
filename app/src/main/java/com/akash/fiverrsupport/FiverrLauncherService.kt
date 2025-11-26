@@ -62,7 +62,6 @@ class FiverrLauncherService : Service() {
     private var vibrator: Vibrator? = null
     private var isScreenOn = true
     private var isVibrationServiceRunning = false // Track if we intentionally started vibration
-    private var originalBrightness: Int = -1 // Store original brightness to restore later
 
     private var nextLaunchTime = 0L
 
@@ -514,6 +513,19 @@ class FiverrLauncherService : Service() {
                     overlayView?.startTimer(launchInterval)
                     overlayView?.setPaused(true) // Keep it paused
                 }
+            }
+            ACTION_UPDATE_IDLE_TIMEOUT -> {
+                // Update idle timeout value
+                idleTimeout = intent.getLongExtra(EXTRA_IDLE_TIMEOUT, 5000L)
+
+                // Save updated idle timeout - use commit() for immediate write
+                val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+                prefs.edit()
+                    .putLong("idle_timeout", idleTimeout)
+                    .commit()
+
+                Log.d("nvm", "Idle timeout updated to: ${idleTimeout}ms")
+                // Note: If idle checker is already running, it will use the new value on next check
             }
             ACTION_PAUSE_FOR_SLIDER -> {
                 // User is dragging slider - pause service temporarily
@@ -1146,63 +1158,32 @@ class FiverrLauncherService : Service() {
         return inCall
     }
 
-    // Save current brightness and reduce to 0
+    // Lower brightness using window overlay (doesn't affect brightness slider)
     private fun reduceBrightness() {
         try {
-            // Save original brightness only once
-            if (originalBrightness == -1) {
-                originalBrightness = Settings.System.getInt(
-                    contentResolver,
-                    Settings.System.SCREEN_BRIGHTNESS
-                )
-                Log.d("nvm", "Original brightness saved: $originalBrightness")
-            }
-
-            // Method 1: Update Settings.System (for system-wide)
-            Settings.System.putInt(
-                contentResolver,
-                Settings.System.SCREEN_BRIGHTNESS,
-                0
-            )
-
-            // Method 2: Update Window brightness (CRITICAL for Android 13+)
-            // This makes the change take effect immediately
+            // Update Window brightness (CRITICAL for Android 13+)
+            // This makes the screen dimmer without changing the system brightness slider
             overlayView?.let { view ->
                 val layoutParams = view.layoutParams as? WindowManager.LayoutParams
                 layoutParams?.screenBrightness = 0f // 0f = minimum brightness
                 windowManager?.updateViewLayout(view, layoutParams)
-                Log.d("nvm", "Window brightness reduced to 0")
+                Log.d("nvm", "Window brightness reduced to 0 (slider unchanged)")
             }
-
-            Log.d("nvm", "Brightness reduced to 0 (Settings + Window)")
         } catch (e: Exception) {
             Log.e("nvm", "Error reducing brightness: ${e.message}", e)
-            Log.w("nvm", "WRITE_SETTINGS permission may be required")
         }
     }
 
-    // Restore original brightness
+    // Restore brightness to system default (whatever the brightness slider is set to)
     private fun restoreBrightness() {
         try {
-            if (originalBrightness != -1) {
-                // Method 1: Restore Settings.System
-                Settings.System.putInt(
-                    contentResolver,
-                    Settings.System.SCREEN_BRIGHTNESS,
-                    originalBrightness
-                )
-
-                // Method 2: Restore Window brightness (CRITICAL for Android 13+)
-                // Use BRIGHTNESS_OVERRIDE_NONE to let system control brightness
-                overlayView?.let { view ->
-                    val layoutParams = view.layoutParams as? WindowManager.LayoutParams
-                    layoutParams?.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-                    windowManager?.updateViewLayout(view, layoutParams)
-                    Log.d("nvm", "Window brightness restored to system default")
-                }
-
-                Log.d("nvm", "Brightness restored to: $originalBrightness (Settings + Window)")
-                originalBrightness = -1 // Reset flag
+            // Restore Window brightness to system default
+            // Use BRIGHTNESS_OVERRIDE_NONE to let system control brightness based on slider value
+            overlayView?.let { view ->
+                val layoutParams = view.layoutParams as? WindowManager.LayoutParams
+                layoutParams?.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                windowManager?.updateViewLayout(view, layoutParams)
+                Log.d("nvm", "Window brightness restored to system default (slider value)")
             }
         } catch (e: Exception) {
             Log.e("nvm", "Error restoring brightness: ${e.message}", e)
@@ -1325,6 +1306,7 @@ class FiverrLauncherService : Service() {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_UPDATE_INTERVAL = "ACTION_UPDATE_INTERVAL"
+        const val ACTION_UPDATE_IDLE_TIMEOUT = "ACTION_UPDATE_IDLE_TIMEOUT"
         const val ACTION_PAUSE_FOR_SLIDER = "ACTION_PAUSE_FOR_SLIDER"
         const val EXTRA_INTERVAL = "EXTRA_INTERVAL"
         const val EXTRA_IDLE_TIMEOUT = "EXTRA_IDLE_TIMEOUT"

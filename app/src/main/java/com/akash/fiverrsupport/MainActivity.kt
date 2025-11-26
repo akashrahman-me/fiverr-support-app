@@ -256,6 +256,12 @@ fun Root(modifier: Modifier = Modifier) {
 
         fun updateIdleTimeout(timeoutSeconds: Int) {
             sharedPrefs.edit { putLong("idle_timeout", (timeoutSeconds * 1000).toLong()) }
+            if (isEnabled) {
+                val serviceIntent = Intent(context, FiverrLauncherService::class.java)
+                serviceIntent.action = FiverrLauncherService.ACTION_UPDATE_IDLE_TIMEOUT
+                serviceIntent.putExtra(FiverrLauncherService.EXTRA_IDLE_TIMEOUT, (timeoutSeconds * 1000).toLong())
+                context.startService(serviceIntent)
+            }
         }
 
     Column(

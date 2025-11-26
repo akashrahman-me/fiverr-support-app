@@ -25,7 +25,8 @@ class ServiceRestartReceiver : BroadcastReceiver() {
                 // Service was killed, restart it if it was enabled
                 if (wasEnabled) {
                     val interval = intent.getLongExtra("interval", prefs.getLong("service_interval", 20000L))
-                    restartService(context, interval)
+                    val idleTimeout = prefs.getLong("idle_timeout", 5000L)
+                    restartService(context, interval, idleTimeout)
                 }
             }
             Intent.ACTION_BOOT_COMPLETED,
@@ -34,19 +35,21 @@ class ServiceRestartReceiver : BroadcastReceiver() {
                 // Device booted or app updated, restart service if it was enabled
                 if (wasEnabled) {
                     val interval = prefs.getLong("service_interval", 20000L)
-                    restartService(context, interval)
+                    val idleTimeout = prefs.getLong("idle_timeout", 5000L)
+                    restartService(context, interval, idleTimeout)
                 }
             }
         }
     }
 
-    private fun restartService(context: Context, interval: Long) {
+    private fun restartService(context: Context, interval: Long, idleTimeout: Long) {
         try {
-            Log.d("nvm", "Restarting FiverrLauncherService with interval: ${interval}ms")
+            Log.d("nvm", "Restarting FiverrLauncherService with interval: ${interval}ms, idleTimeout: ${idleTimeout}ms")
 
             val serviceIntent = Intent(context, FiverrLauncherService::class.java).apply {
                 action = FiverrLauncherService.ACTION_START
                 putExtra(FiverrLauncherService.EXTRA_INTERVAL, interval)
+                putExtra(FiverrLauncherService.EXTRA_IDLE_TIMEOUT, idleTimeout)
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
