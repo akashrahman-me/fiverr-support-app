@@ -320,11 +320,30 @@ class FiverrLauncherService : Service() {
                         // Update hasInternet flag
                         hasInternet = false
 
-                        // Pause service due to internet loss
-                        pauseService(startIdleChecker = false, shouldRestoreBrightness = false)
+                        // Clear Fiverr from recents when no internet (reuse network connectivity loss logic)
+                        val accessibilityService = FiverrAccessibilityService.getInstance()
+                        if (accessibilityService != null && !isPaused && isRunning) {
+                            // Clear Fiverr first (callback runs on main thread)
+                            accessibilityService.clearFiverrFromRecents { success ->
+                                if (success) {
+                                    Log.d("nvm", "Successfully cleared Fiverr from recents after internet verification failed")
+                                } else {
+                                    Log.w("nvm", "Failed to clear Fiverr from recents (may not be running)")
+                                }
 
-                        // Show notification
-                        Toast.makeText(this@FiverrLauncherService, "No internet - service paused", Toast.LENGTH_SHORT).show()
+                                // Then pause service (already on main thread)
+                                if (!isPaused && isRunning) {
+                                    pauseService(startIdleChecker = false, shouldRestoreBrightness = false) // Keep brightness low, no idle checker
+                                    Toast.makeText(this@FiverrLauncherService, "No internet - service paused", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        } else {
+                            // If accessibility not available or already paused, just pause
+                            if (!isPaused && isRunning) {
+                                pauseService(startIdleChecker = false, shouldRestoreBrightness = false)
+                                Toast.makeText(this@FiverrLauncherService, "No internet - service paused", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }
             } else {
