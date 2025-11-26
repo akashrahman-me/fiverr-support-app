@@ -299,17 +299,34 @@ class FiverrLauncherService : Service() {
             Log.d("nvm", "launchRunnable.run() called - isRunning=$isRunning, isPaused=$isPaused")
 
             if (isRunning && !isPaused) {
-                Log.d("nvm", "⏰ Timer reached 0 - Executing action NOW")
-                handleFiverrAction()
-                nextLaunchTime = System.currentTimeMillis() + launchInterval
+                Log.d("nvm", "⏰ Timer reached 0 - Verifying internet before executing action")
 
-                // Reset the timer to restart countdown after action
-                overlayView?.resetTimer()
-                Log.d("nvm", "Timer reset after Fiverr action - countdown restarted")
+                // Verify actual internet connectivity before executing task
+                verifyInternetConnectivity { hasActualInternet ->
+                    if (hasActualInternet) {
+                        Log.d("nvm", "✅ Internet verified - Executing action NOW")
+                        handleFiverrAction()
+                        nextLaunchTime = System.currentTimeMillis() + launchInterval
 
-                // Schedule next action with full interval
-                handler.postDelayed(this, launchInterval)
-                Log.d("nvm", "Next action scheduled in ${launchInterval}ms")
+                        // Reset the timer to restart countdown after action
+                        overlayView?.resetTimer()
+                        Log.d("nvm", "Timer reset after Fiverr action - countdown restarted")
+
+                        // Schedule next action with full interval
+                        handler.postDelayed(this, launchInterval)
+                        Log.d("nvm", "Next action scheduled in ${launchInterval}ms")
+                    } else {
+                        Log.w("nvm", "❌ Internet verification failed - pausing service")
+                        // Update hasInternet flag
+                        hasInternet = false
+
+                        // Pause service due to internet loss
+                        pauseService(startIdleChecker = false, shouldRestoreBrightness = false)
+
+                        // Show notification
+                        Toast.makeText(this@FiverrLauncherService, "No internet - service paused", Toast.LENGTH_SHORT).show()
+                    }
+                }
             } else {
                 Log.w("nvm", "⚠️ launchRunnable skipped execution - isRunning=$isRunning, isPaused=$isPaused")
                 // DO NOT reschedule when paused - wait for resumeService() to schedule with correct remaining time
@@ -666,6 +683,61 @@ class FiverrLauncherService : Service() {
     }
 
     /**
+     * Verify actual internet connectivity by making a network request
+     * Uses multiple fallback endpoints for reliability
+     */
+    private fun verifyInternetConnectivity(callback: (Boolean) -> Unit) {
+        // Run network check in background thread
+        Thread {
+            var hasInternet = false
+
+            // List of lightweight endpoints to check (in order of preference)
+            val endpoints = listOf(
+                "https://clients3.google.com/generate_204", // Google's connectivity check (204 No Content)
+                "https://www.google.com",
+                "https://www.cloudflare.com",
+                "https://1.1.1.1" // Cloudflare DNS
+            )
+
+            for (endpoint in endpoints) {
+                try {
+                    val url = java.net.URL(endpoint)
+                    val connection = url.openConnection() as java.net.HttpURLConnection
+                    connection.connectTimeout = 5000 // 5 second timeout
+                    connection.readTimeout = 5000
+                    connection.requestMethod = "HEAD" // HEAD request is faster
+                    connection.instanceFollowRedirects = false
+                    connection.useCaches = false
+
+                    val responseCode = connection.responseCode
+                    connection.disconnect()
+
+                    // Accept 200-299 range and 204 (No Content) as success
+                    if (responseCode in 200..299 || responseCode == 204) {
+                        hasInternet = true
+                        Log.d("nvm", "✅ Internet verified via $endpoint (code: $responseCode)")
+                        break
+                    } else {
+                        Log.d("nvm", "❌ Endpoint $endpoint returned code: $responseCode")
+                    }
+                } catch (e: Exception) {
+                    Log.d("nvm", "❌ Failed to reach $endpoint: ${e.message}")
+                    // Continue to next endpoint
+                }
+            }
+
+            if (!hasInternet) {
+                Log.w("nvm", "❌ All endpoints failed - no internet connectivity")
+            }
+
+            // Call callback on main thread
+            handler.post {
+                callback(hasInternet)
+            }
+        }.start()
+    }
+
+    /**
      * Main logic: Check if Fiverr is in foreground
      * - If YES: Perform pull-down scroll gesture (via accessibility)
      * - If NO: Launch/bring Fiverr to front
@@ -954,26 +1026,35 @@ class FiverrLauncherService : Service() {
                     val newHasInternet = hasInternetCapability && isValidated
 
                     if (newHasInternet != hasInternet) {
-                        hasInternet = newHasInternet
-                        Log.d("nvm", "Network state changed: hasInternet = $hasInternet")
+                        Log.d("nvm", "Network validation changed: newHasInternet=$newHasInternet, previousHasInternet=$hasInternet")
 
-                        if (hasInternet) {
-                            Log.d("nvm", "Internet reconnected - checking if should auto-resume")
+                        if (newHasInternet) {
+                            Log.d("nvm", "Network claims internet restored - verifying with actual connectivity check")
 
-                            // Auto-resume ONLY if service was paused by internet loss
-                            // If paused by user interaction, let idle checker handle resume
-                            // ALSO: Don't resume if screen is off - wait for unlock
-                            if (isPaused && isRunning && isPausedByInternetLoss && isScreenOn) {
-                                Log.d("nvm", "Internet restored, screen ON, was paused by internet loss - auto-resuming service")
-                                handler.post {
-                                    resumeService()
+                            // Verify actual internet connectivity before resuming
+                            verifyInternetConnectivity { hasActualInternet ->
+                                if (hasActualInternet) {
+                                    hasInternet = true
+                                    Log.d("nvm", "✅ Internet verified and restored - checking if should auto-resume")
+
+                                    // Auto-resume ONLY if service was paused by internet loss
+                                    // If paused by user interaction, let idle checker handle resume
+                                    // ALSO: Don't resume if screen is off - wait for unlock
+                                    if (isPaused && isRunning && isPausedByInternetLoss && isScreenOn) {
+                                        Log.d("nvm", "Internet restored, screen ON, was paused by internet loss - auto-resuming service")
+                                        resumeService()
+                                    } else if (isPaused && isRunning && isPausedByInternetLoss && !isScreenOn) {
+                                        Log.d("nvm", "Internet restored but screen is OFF - NOT resuming (will resume on unlock)")
+                                    } else if (isPaused && isRunning && !isPausedByInternetLoss) {
+                                        Log.d("nvm", "Internet restored but service was paused by user interaction - idle checker will handle resume")
+                                    }
+                                } else {
+                                    Log.w("nvm", "❌ Network validation passed but actual internet check failed - keeping hasInternet=false")
+                                    hasInternet = false
                                 }
-                            } else if (isPaused && isRunning && isPausedByInternetLoss && !isScreenOn) {
-                                Log.d("nvm", "Internet restored but screen is OFF - NOT resuming (will resume on unlock)")
-                            } else if (isPaused && isRunning && !isPausedByInternetLoss) {
-                                Log.d("nvm", "Internet restored but service was paused by user interaction - idle checker will handle resume")
                             }
                         } else {
+                            hasInternet = false
                             Log.d("nvm", "Internet lost - handling service pause")
 
                             // If service is already paused by user interaction, mark it as paused by internet loss too
