@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -150,6 +151,9 @@ fun Root() {
     var isAccessibilityEnabled by remember {
         mutableStateOf(com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled(context))
     }
+    var isOverlayEnabled by remember {
+        mutableStateOf(Settings.canDrawOverlays(context))
+    }
 
     // Update permission states when resuming
     DisposableEffect(lifecycleOwner) {
@@ -161,6 +165,7 @@ fun Root() {
                 } else true
                 isBatteryOptimizationDisabled = (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName)
                 isAccessibilityEnabled = com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled(context)
+                isOverlayEnabled = Settings.canDrawOverlays(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -290,7 +295,8 @@ fun Root() {
             // Check if all required permissions are granted
             val allPermissionsGranted = isNotificationEnabled &&
                     isBatteryOptimizationDisabled &&
-                    isAccessibilityEnabled
+                    isAccessibilityEnabled &&
+                    isOverlayEnabled
 
             // Only show permissions section if not all permissions are granted
             if (!allPermissionsGranted) {
@@ -357,31 +363,32 @@ fun Root() {
                             Toast.makeText(context, "Please enable Fiverr Support accessibility service", Toast.LENGTH_LONG).show()
                         }
                     )
+                    Spacer(modifier = Modifier.padding(4.dp))
+                }
+
+                if (!isOverlayEnabled) {
+                    PermissionToggleItem(
+                        icon = Icons.Default.Info,
+                        title = "Display Over Apps",
+                        isEnabled = isOverlayEnabled,
+                        enabledText = "Permission granted",
+                        disabledText = "Required for floating status indicator",
+                        onToggle = {
+                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                                data = "package:${context.packageName}".toUri()
+                            }
+                            try {
+                                context.startActivity(intent)
+                                Toast.makeText(context, "Please allow display over other apps", Toast.LENGTH_LONG).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Could not open overlay settings", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
                 }
 
                 Spacer(modifier = Modifier.padding(16.dp))
             }
-
-            // How it works section
-            SectionHeader(
-                icon = Icons.Default.Star,
-                title = "How It Works",
-                subtitle = "Battery-efficient automation"
-            )
-
-            Spacer(modifier = Modifier.padding(12.dp))
-
-            Text(
-                text = "1. Enable the service above\n" +
-                       "2. Turn off your screen (lock phone)\n" +
-                       "3. After the interval, screen wakes briefly\n" +
-                       "4. Fiverr opens/refreshes automatically\n" +
-                       "5. Screen locks again\n" +
-                       "6. Repeat - keeps you online with minimal battery use!",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                modifier = Modifier.padding(horizontal = 8.dp)
-            )
 
             Spacer(modifier = Modifier.padding(24.dp))
         }
