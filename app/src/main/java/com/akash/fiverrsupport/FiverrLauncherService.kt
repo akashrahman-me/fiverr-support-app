@@ -73,6 +73,12 @@ class FiverrLauncherService : Service() {
                 Intent.ACTION_SCREEN_ON -> {
                     isScreenOn = true
                     Log.d("nvm", "💡 Screen ON")
+                    
+                    // Cancel scheduled action when user turns on screen
+                    if (!isPerformingAction) {
+                        cancelScheduledAction()
+                        Log.d("nvm", "Cancelled pending action - user turned on screen")
+                    }
                 }
                 Intent.ACTION_USER_PRESENT -> {
                     Log.d("nvm", "🔓 User unlocked device")
