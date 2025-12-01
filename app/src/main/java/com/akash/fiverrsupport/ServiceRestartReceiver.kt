@@ -24,9 +24,8 @@ class ServiceRestartReceiver : BroadcastReceiver() {
             ACTION_RESTART_SERVICE -> {
                 // Service was killed, restart it if it was enabled
                 if (wasEnabled) {
-                    val interval = intent.getLongExtra("interval", prefs.getLong("service_interval", 20000L))
-                    val idleTimeout = prefs.getLong("idle_timeout", 5000L)
-                    restartService(context, interval, idleTimeout)
+                    val interval = intent.getLongExtra("interval", prefs.getLong("service_interval", 30000L))
+                    restartService(context, interval)
                 }
             }
             Intent.ACTION_BOOT_COMPLETED,
@@ -34,22 +33,20 @@ class ServiceRestartReceiver : BroadcastReceiver() {
             "android.intent.action.QUICKBOOT_POWERON" -> {
                 // Device booted or app updated, restart service if it was enabled
                 if (wasEnabled) {
-                    val interval = prefs.getLong("service_interval", 20000L)
-                    val idleTimeout = prefs.getLong("idle_timeout", 5000L)
-                    restartService(context, interval, idleTimeout)
+                    val interval = prefs.getLong("service_interval", 30000L)
+                    restartService(context, interval)
                 }
             }
         }
     }
 
-    private fun restartService(context: Context, interval: Long, idleTimeout: Long) {
+    private fun restartService(context: Context, interval: Long) {
         try {
-            Log.d("nvm", "Restarting FiverrLauncherService with interval: ${interval}ms, idleTimeout: ${idleTimeout}ms")
+            Log.d("nvm", "Restarting FiverrLauncherService with interval: ${interval}ms")
 
             val serviceIntent = Intent(context, FiverrLauncherService::class.java).apply {
                 action = FiverrLauncherService.ACTION_START
                 putExtra(FiverrLauncherService.EXTRA_INTERVAL, interval)
-                putExtra(FiverrLauncherService.EXTRA_IDLE_TIMEOUT, idleTimeout)
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
