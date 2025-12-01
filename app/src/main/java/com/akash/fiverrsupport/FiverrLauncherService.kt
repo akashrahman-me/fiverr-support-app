@@ -25,9 +25,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
-import android.os.VibrationEffect
-import android.os.VibrationAttributes
-import android.os.Vibrator
 import android.provider.Settings
 import android.telecom.TelecomManager
 import android.telephony.PhoneStateListener
@@ -59,9 +56,8 @@ class FiverrLauncherService : Service() {
     private var windowManager: WindowManager? = null
     private var overlayView: CircularTimerView? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var vibrator: Vibrator? = null
     private var isScreenOn = true
-    private var isVibrationServiceRunning = false // Track if we intentionally started vibration
+    private var isScreenWakeServiceRunning = false // Track if we intentionally started wake service
 
     private var nextLaunchTime = 0L
 
@@ -139,14 +135,14 @@ class FiverrLauncherService : Service() {
                         pauseService(startIdleChecker = false) // Don't start idle checker for screen lock
                         Log.d("nvm", "Service paused due to screen lock - ready for instant resume on unlock")
 
-                        // Start vibration alert only if NOT paused by internet loss
-                        startVibrationAlert()
+                        // Start screen wake alert only if NOT paused by internet loss
+                        startScreenWakeAlert()
                     } else if (isPaused && isPausedByInternetLoss) {
-                        // Already paused by internet loss - don't vibrate
-                        Log.d("nvm", "Screen turned OFF but already paused by internet loss - NOT starting vibration")
+                        // Already paused by internet loss - don't start screen wake
+                        Log.d("nvm", "Screen turned OFF but already paused by internet loss - NOT starting screen wake")
                     } else if (!isPaused && !isRunning) {
-                        // Service is stopped - don't vibrate
-                        Log.d("nvm", "Screen turned OFF but service is not running - NOT starting vibration")
+                        // Service is stopped - don't start screen wake
+                        Log.d("nvm", "Screen turned OFF but service is not running - NOT starting screen wake")
                     } else if (isPaused && isRunning) {
                         // Service is already paused (by user touch) - convert to screen-lock pause
                         Log.d("nvm", "Screen turned OFF while already paused (was paused by touch) - converting to screen-lock pause")
@@ -163,8 +159,8 @@ class FiverrLauncherService : Service() {
 
                         Log.d("nvm", "Converted to screen-lock pause - lastUserInteractionTime reset to 0, idle checker stopped")
 
-                        // Start vibration
-                        startVibrationAlert()
+                        // Start screen wake
+                        startScreenWakeAlert()
                     }
                 }
                 Intent.ACTION_USER_PRESENT -> {
@@ -173,10 +169,10 @@ class FiverrLauncherService : Service() {
                     Log.d("nvm", "🔓 USER_PRESENT received - user unlocked device")
                     Log.d("nvm", "📊 State: isPaused=$isPaused, isRunning=$isRunning, lastUserInteractionTime=$lastUserInteractionTime")
 
-                    // Stop vibration
-                    if (isVibrationServiceRunning) {
-                        Log.d("nvm", "Stopping vibration after unlock")
-                        stopVibrationAlert()
+                    // Stop screen wake service
+                    if (isScreenWakeServiceRunning) {
+                        Log.d("nvm", "Stopping screen wake after unlock")
+                        stopScreenWakeAlert()
                     }
 
                     // Check if user was paused by touch interaction (idle checker is running)
@@ -234,14 +230,14 @@ class FiverrLauncherService : Service() {
                         val keyguardManager = getSystemService(KEYGUARD_SERVICE) as android.app.KeyguardManager
                         val isLocked = keyguardManager.isKeyguardLocked
 
-                        Log.d("nvm", "💡 Screen ON settled - isLocked: $isLocked, isVibrationServiceRunning: $isVibrationServiceRunning")
+                        Log.d("nvm", "💡 Screen ON settled - isLocked: $isLocked, isScreenWakeServiceRunning: $isScreenWakeServiceRunning")
                         Log.d("nvm", "📊 State: isPaused=$isPaused, isRunning=$isRunning, lastUserInteractionTime=$lastUserInteractionTime")
 
                         if (!isLocked) {
-                            // Screen is ON and unlocked - stop vibration if running
-                            if (isVibrationServiceRunning) {
-                                Log.d("nvm", "Screen unlocked (via SCREEN_ON) - stopping vibration alert")
-                                stopVibrationAlert()
+                            // Screen is ON and unlocked - stop screen wake service if running
+                            if (isScreenWakeServiceRunning) {
+                                Log.d("nvm", "Screen unlocked (via SCREEN_ON) - stopping screen wake alert")
+                                stopScreenWakeAlert()
                             }
 
                             // Check if user was paused by touch interaction
@@ -451,10 +447,10 @@ class FiverrLauncherService : Service() {
                     }
                 }
 
-                // Check if screen is off and start vibration if needed
+                // Check if screen is off and start screen wake if needed
                 if (!isScreenOn) {
-                    Log.d("nvm", "Service restored with screen OFF - starting vibration alert")
-                    startVibrationAlert()
+                    Log.d("nvm", "Service restored with screen OFF - starting screen wake alert")
+                    startScreenWakeAlert()
                 }
             } else {
                 Log.d("nvm", "Service was disabled by user, not restoring")
@@ -497,10 +493,10 @@ class FiverrLauncherService : Service() {
                     reduceBrightness()
                 }
 
-                // Check if screen is off and start vibration if needed
+                // Check if screen is off and start screen wake if needed
                 if (!isScreenOn) {
-                    Log.d("nvm", "Service started with screen OFF - starting vibration alert")
-                    startVibrationAlert()
+                    Log.d("nvm", "Service started with screen OFF - starting screen wake alert")
+                    startScreenWakeAlert()
                 }
             }
             ACTION_STOP -> {
@@ -515,8 +511,8 @@ class FiverrLauncherService : Service() {
 
                 Log.d("nvm", "Saved state: service_enabled=false")
 
-                // Stop vibration, remove overlay and release wake lock
-                stopVibrationAlert()
+                // Stop screen wake, remove overlay and release wake lock
+                stopScreenWakeAlert()
                 removeOverlay()
                 releaseWakeLock()
 
@@ -1290,42 +1286,38 @@ class FiverrLauncherService : Service() {
         }
     }
 
-    // Helper to start both vibration engines
-    private fun startVibrationAlert() {
+    // Helper to start screen wake service
+    private fun startScreenWakeAlert() {
         try {
-            // Always start the service to wake screen (vibration is controlled inside the service)
-            val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
-            val isVibrationEnabled = prefs.getBoolean("vibrate_on_screen_off", false)
-
-            Log.d("nvm", "startVibrationAlert() called - isRunning: $isRunning, isScreenOn: $isScreenOn, vibrationEnabled: $isVibrationEnabled")
-            Log.d("nvm", "Starting wake service (screen will wake up, vibration depends on user setting)")
+            Log.d("nvm", "startScreenWakeAlert() called - isRunning: $isRunning, isScreenOn: $isScreenOn")
+            Log.d("nvm", "Starting wake service to keep screen awake")
 
             if (isRunning) {
-                isVibrationServiceRunning = true // Set flag BEFORE starting service
-                val serviceIntent = Intent(this, VibrationService::class.java)
+                isScreenWakeServiceRunning = true // Set flag BEFORE starting service
+                val serviceIntent = Intent(this, ScreenWakeService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(serviceIntent)
                 } else {
                     startService(serviceIntent)
                 }
-                Log.d("nvm", "Started VibrationService (wake + optional vibration) via ${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) "startForegroundService" else "startService"}")
+                Log.d("nvm", "Started ScreenWakeService via ${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) "startForegroundService" else "startService"}")
             } else {
-                Log.w("nvm", "Cannot start VibrationService - isRunning is false")
+                Log.w("nvm", "Cannot start ScreenWakeService - isRunning is false")
             }
         } catch (e: Exception) {
-            Log.e("nvm", "Failed to start VibrationService: ${e.message}", e)
-            isVibrationServiceRunning = false
+            Log.e("nvm", "Failed to start ScreenWakeService: ${e.message}", e)
+            isScreenWakeServiceRunning = false
         }
     }
 
-    // Helper to stop both vibration engines
-    private fun stopVibrationAlert() {
+    // Helper to stop screen wake service
+    private fun stopScreenWakeAlert() {
         try {
-            isVibrationServiceRunning = false // Clear flag BEFORE stopping service
-            stopService(Intent(this, VibrationService::class.java))
-            Log.d("nvm", "Stopped VibrationService")
+            isScreenWakeServiceRunning = false // Clear flag BEFORE stopping service
+            stopService(Intent(this, ScreenWakeService::class.java))
+            Log.d("nvm", "Stopped ScreenWakeService")
         } catch (e: Exception) {
-            Log.e("nvm", "Failed to stop VibrationService: ${e.message}")
+            Log.e("nvm", "Failed to stop ScreenWakeService: ${e.message}")
         }
     }
 
@@ -1345,7 +1337,7 @@ class FiverrLauncherService : Service() {
         handler.removeCallbacks(launchRunnable)
         removeOverlay()
         releaseWakeLock()
-        stopVibrationAlert()
+        stopScreenWakeAlert()
 
         // Unregister screen state receiver
         try {

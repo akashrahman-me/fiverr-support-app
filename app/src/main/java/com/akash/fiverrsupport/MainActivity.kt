@@ -199,10 +199,6 @@ fun Root(modifier: Modifier = Modifier) {
             mutableStateOf(com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled(context))
         }
 
-        var isVibrationOnScreenOffEnabled by remember {
-            mutableStateOf(sharedPrefs.getBoolean("vibrate_on_screen_off", false))
-        }
-
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_RESUME) {
@@ -375,20 +371,6 @@ fun Root(modifier: Modifier = Modifier) {
                         updateIdleTimeout(timeoutSeconds)
                     },
                     optionsText = "Available: 5s, 10s, 30s, 1m, 2m, 5m"
-                )
-
-                Spacer(modifier = Modifier.padding(4.dp))
-
-                PermissionToggleItem(
-                    icon = Icons.Default.Warning,
-                    title = "Vibrate on Screen Off",
-                    isEnabled = isVibrationOnScreenOffEnabled,
-                    enabledText = "Device vibrates when screen turns off",
-                    disabledText = "No vibration when screen turns off",
-                    onToggle = {
-                        isVibrationOnScreenOffEnabled = !isVibrationOnScreenOffEnabled
-                        sharedPrefs.edit { putBoolean("vibrate_on_screen_off", isVibrationOnScreenOffEnabled) }
-                    }
                 )
 
                 Spacer(modifier = Modifier.padding(16.dp))

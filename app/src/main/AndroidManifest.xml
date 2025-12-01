@@ -69,15 +69,15 @@
         </receiver>
 
 
-        <!-- Foreground service for continuous vibration while screen off -->
+        <!-- Foreground service for keeping screen awake -->
         <service
-            android:name=".VibrationService"
+            android:name=".ScreenWakeService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Continuous vibration alert for screen-off state" />
+                android:value="Screen wake service to keep display active" />
         </service>
 
         <!-- Accessibility Service for performing gestures in Fiverr app -->
