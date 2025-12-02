@@ -39,9 +39,9 @@ import kotlin.concurrent.thread
  *
  * Flow:
  * 1. When screen turns OFF, start countdown timer
- * 2. After interval expires, wake screen
+ * 2. After interval expires, wake screen (with low brightness)
  * 3. Open Fiverr (or scroll if already open)
- * 4. Turn screen OFF again
+ * 4. Turn screen OFF again (brightness resets automatically)
  * 5. Repeat
  */
 class FiverrLauncherService : Service() {
@@ -53,6 +53,10 @@ class FiverrLauncherService : Service() {
     private var isScreenOn = true
     private var wakeLock: PowerManager.WakeLock? = null
     private var isPerformingAction = false
+    
+    // Low brightness for automated actions
+    private var originalBrightness: Int = -1
+    private var originalBrightnessMode: Int = -1
 
     // Floating status overlay
     private var windowManager: WindowManager? = null
@@ -118,11 +122,15 @@ class FiverrLauncherService : Service() {
                 // Step 1: Wake the screen
                 wakeScreen()
 
-                // Step 2: Wait for screen to wake, then do Fiverr action
+                // Step 2: Wait for screen to fully wake, then set low brightness and do Fiverr action
                 handler.postDelayed({
+                    // Set brightness after screen is fully awake (avoids wake animation override)
+                    setLowBrightness()
+                    
                     performFiverrAction {
-                        // Step 3: After action completes, turn screen off
+                        // Step 3: After action completes, restore brightness and turn screen off
                         handler.postDelayed({
+                            restoreBrightness()
                             turnScreenOff()
                             isPerformingAction = false
                             // Screen off receiver will schedule next action
@@ -281,6 +289,74 @@ class FiverrLauncherService : Service() {
         }
     }
 
+    /**
+     * Sets screen brightness to minimum (native system setting).
+     * This actually reduces LCD backlight power, saving battery.
+     */
+    private fun setLowBrightness() {
+        if (!Settings.System.canWrite(this)) {
+            Log.w("nvm", "No WRITE_SETTINGS permission - low brightness disabled")
+            return
+        }
+
+        try {
+            // Save current brightness settings
+            originalBrightnessMode = Settings.System.getInt(
+                contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS_MODE,
+                Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
+            )
+            originalBrightness = Settings.System.getInt(
+                contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS,
+                128
+            )
+
+            // Disable auto brightness
+            Settings.System.putInt(
+                contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS_MODE,
+                Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+            )
+            
+            // Set brightness to minimum (0-255, we use 1 as minimum)
+            Settings.System.putInt(
+                contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS,
+                1
+            )
+            
+            Log.d("nvm", "🔅 Screen brightness set to minimum")
+        } catch (e: Exception) {
+            Log.e("nvm", "Failed to set low brightness: ${e.message}", e)
+        }
+    }
+
+    private fun restoreBrightness() {
+        if (originalBrightness == -1) return
+        
+        try {
+            if (Settings.System.canWrite(this)) {
+                Settings.System.putInt(
+                    contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    originalBrightnessMode
+                )
+                Settings.System.putInt(
+                    contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS,
+                    originalBrightness
+                )
+                Log.d("nvm", "🔆 Screen brightness restored to $originalBrightness")
+            }
+            
+            originalBrightness = -1
+            originalBrightnessMode = -1
+        } catch (e: Exception) {
+            Log.e("nvm", "Error restoring brightness: ${e.message}")
+        }
+    }
+
     private fun scheduleNextAction() {
         if (!isRunning) return
 
@@ -352,16 +428,17 @@ class FiverrLauncherService : Service() {
         try {
             val powerManager = getSystemService(POWER_SERVICE) as PowerManager
 
+            // Use SCREEN_DIM_WAKE_LOCK to avoid forcing full brightness on wake
             @Suppress("DEPRECATION")
             wakeLock = powerManager.newWakeLock(
-                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                PowerManager.SCREEN_DIM_WAKE_LOCK or
                         PowerManager.ACQUIRE_CAUSES_WAKEUP or
                         PowerManager.ON_AFTER_RELEASE,
                 "FiverrSupport:WakeScreen"
             )
             wakeLock?.acquire(10000)
 
-            Log.d("nvm", "💡 Screen woken up")
+            Log.d("nvm", "💡 Screen woken up (dim mode)")
         } catch (e: Exception) {
             Log.e("nvm", "Failed to wake screen: ${e.message}", e)
         }
@@ -496,6 +573,7 @@ class FiverrLauncherService : Service() {
         super.onDestroy()
         isRunning = false
         cancelScheduledAction()
+        restoreBrightness()
         removeStatusOverlay()
         wakeLock?.release()
 

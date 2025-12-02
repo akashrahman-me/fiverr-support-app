@@ -154,6 +154,9 @@ fun Root() {
     var isOverlayEnabled by remember {
         mutableStateOf(Settings.canDrawOverlays(context))
     }
+    var isWriteSettingsEnabled by remember {
+        mutableStateOf(Settings.System.canWrite(context))
+    }
 
     // Update permission states when resuming
     DisposableEffect(lifecycleOwner) {
@@ -166,6 +169,7 @@ fun Root() {
                 isBatteryOptimizationDisabled = (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName)
                 isAccessibilityEnabled = com.akash.fiverrsupport.utils.isAccessibilityServiceEnabled(context)
                 isOverlayEnabled = Settings.canDrawOverlays(context)
+                isWriteSettingsEnabled = Settings.System.canWrite(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -296,7 +300,8 @@ fun Root() {
             val allPermissionsGranted = isNotificationEnabled &&
                     isBatteryOptimizationDisabled &&
                     isAccessibilityEnabled &&
-                    isOverlayEnabled
+                    isOverlayEnabled &&
+                    isWriteSettingsEnabled
 
             // Only show permissions section if not all permissions are granted
             if (!allPermissionsGranted) {
@@ -382,6 +387,28 @@ fun Root() {
                                 Toast.makeText(context, "Please allow display over other apps", Toast.LENGTH_LONG).show()
                             } catch (e: Exception) {
                                 Toast.makeText(context, "Could not open overlay settings", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
+                    Spacer(modifier = Modifier.padding(4.dp))
+                }
+
+                if (!isWriteSettingsEnabled) {
+                    PermissionToggleItem(
+                        icon = Icons.Default.Settings,
+                        title = "Modify System Settings",
+                        isEnabled = isWriteSettingsEnabled,
+                        enabledText = "Permission granted",
+                        disabledText = "Required for low brightness during automation",
+                        onToggle = {
+                            val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                                data = "package:${context.packageName}".toUri()
+                            }
+                            try {
+                                context.startActivity(intent)
+                                Toast.makeText(context, "Please allow modifying system settings", Toast.LENGTH_LONG).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Could not open settings", Toast.LENGTH_SHORT).show()
                             }
                         }
                     )
