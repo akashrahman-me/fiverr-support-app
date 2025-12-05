@@ -119,21 +119,25 @@ class FiverrLauncherService : Service() {
                 Log.d("nvm", "📶 Internet available - executing action sequence")
                 isPerformingAction = true
 
-                // Step 1: Wake the screen
+                // Step 1: Set low brightness BEFORE waking screen (screen is still off)
+                setLowBrightness()
+
+                // Step 2: Wake the screen (will wake with low brightness already set)
                 wakeScreen()
 
-                // Step 2: Wait for screen to fully wake, then set low brightness and do Fiverr action
+                // Step 3: Wait for screen to fully wake, then do Fiverr action
                 handler.postDelayed({
-                    // Set brightness after screen is fully awake (avoids wake animation override)
-                    setLowBrightness()
-                    
                     performFiverrAction {
-                        // Step 3: After action completes, restore brightness and turn screen off
+                        // Step 4: After action completes, turn screen off first, then restore brightness
                         handler.postDelayed({
-                            restoreBrightness()
                             turnScreenOff()
-                            isPerformingAction = false
-                            // Screen off receiver will schedule next action
+                            
+                            // Restore brightness AFTER screen is off (user won't see the change)
+                            handler.postDelayed({
+                                restoreBrightness()
+                                isPerformingAction = false
+                                // Screen off receiver will schedule next action
+                            }, 500)
                         }, 2000)
                     }
                 }, 1000)
