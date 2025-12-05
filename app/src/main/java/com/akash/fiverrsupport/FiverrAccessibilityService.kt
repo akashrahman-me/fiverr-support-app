@@ -100,6 +100,113 @@ class FiverrAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Clear Fiverr from recent apps.
+     * Opens the recents view and swipes to dismiss Fiverr.
+     * 
+     * For MIUI 2-column grid:
+     * - Left column: swipe LEFT to dismiss
+     * - Right column: swipe RIGHT to dismiss
+     * 
+     * We'll try both directions to ensure it gets cleared regardless of position.
+     */
+    fun clearFiverrFromRecents(callback: (Boolean) -> Unit) {
+        try {
+            Log.d("nvm", "🗑️ Opening recents to clear Fiverr...")
+            
+            // Step 1: Open recent apps
+            val recentsOpened = performGlobalAction(GLOBAL_ACTION_RECENTS)
+            if (!recentsOpened) {
+                Log.e("nvm", "Failed to open recents")
+                callback(false)
+                return
+            }
+            
+            // Step 2: Wait for recents to open, then perform swipe gestures
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                performClearSwipeGestures(callback)
+            }, 800) // Wait 800ms for recents to fully open
+            
+        } catch (e: Exception) {
+            Log.e("nvm", "Error clearing Fiverr from recents: ${e.message}", e)
+            callback(false)
+        }
+    }
+    
+    /**
+     * Perform swipe gesture to clear the last opened app from recents.
+     * 
+     * MIUI 2-column grid layout:
+     * - Last opened app appears in the LEFT column
+     * - Swipe LEFT to dismiss apps in the left column
+     */
+    private fun performClearSwipeGestures(callback: (Boolean) -> Unit) {
+        val displayMetrics = resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+        
+        // In MIUI 2-column grid, the last opened app (Fiverr) is in the LEFT column
+        // We only need to swipe LEFT on the left column to dismiss it
+        val leftColumnX = screenWidth * 0.25f
+        val centerY = screenHeight * 0.5f
+        
+        // Swipe LEFT to dismiss the app in left column (Fiverr)
+        performHorizontalSwipe(leftColumnX, centerY, -screenWidth * 0.4f) { swipeSuccess ->
+            if (swipeSuccess) {
+                Log.d("nvm", "✅ Left column swipe completed - Fiverr dismissed")
+            } else {
+                Log.w("nvm", "Left column swipe failed")
+            }
+            
+            // Go back to home after clearing
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                performGlobalAction(GLOBAL_ACTION_HOME)
+                Log.d("nvm", "Returned to home screen")
+                callback(swipeSuccess)
+            }, 500)
+        }
+    }
+    
+    /**
+     * Perform a horizontal swipe gesture.
+     * @param startX Starting X position
+     * @param startY Starting Y position  
+     * @param deltaX Distance to swipe (negative = left, positive = right)
+     */
+    private fun performHorizontalSwipe(startX: Float, startY: Float, deltaX: Float, callback: (Boolean) -> Unit) {
+        try {
+            val path = Path()
+            path.moveTo(startX, startY)
+            path.lineTo(startX + deltaX, startY)
+            
+            val gestureBuilder = GestureDescription.Builder()
+            val gestureStroke = GestureDescription.StrokeDescription(path, 0, 200) // 200ms duration
+            gestureBuilder.addStroke(gestureStroke)
+            
+            val result = dispatchGesture(
+                gestureBuilder.build(),
+                object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        callback(true)
+                    }
+                    
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        callback(false)
+                    }
+                },
+                null
+            )
+            
+            if (!result) {
+                callback(false)
+            }
+        } catch (e: Exception) {
+            Log.e("nvm", "Error performing horizontal swipe: ${e.message}", e)
+            callback(false)
+        }
+    }
+
+
     companion object {
         private var instance: FiverrAccessibilityService? = null
 

@@ -90,6 +90,17 @@ class FiverrLauncherService : Service() {
                         cancelScheduledAction()
                         Log.d("nvm", "Cancelled pending action - user is active")
                     }
+                    
+                    // Auto-hide Fiverr if it's in foreground when user unlocks
+                    // This ensures user doesn't notice the automation was running
+                    val fiverrPackage = "com.fiverr.fiverr"
+                    if (isAppInForeground(this@FiverrLauncherService, fiverrPackage)) {
+                        Log.d("nvm", "🏠 Fiverr is open - pressing HOME to hide it from user")
+                        val accessibilityService = FiverrAccessibilityService.getInstance()
+                        accessibilityService?.performGlobalAction(
+                            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
+                        )
+                    }
                 }
             }
         }
@@ -110,10 +121,60 @@ class FiverrLauncherService : Service() {
         // Check internet connectivity first
         checkInternetConnectivity { hasInternet ->
             if (!hasInternet) {
-                Log.d("nvm", "📵 No internet - skipping action, will retry at next interval")
-                // Schedule next action without waking screen
-                if (!isScreenOn) {
-                    scheduleNextAction()
+                Log.d("nvm", "📵 No internet - clearing Fiverr from recents to save resources")
+                
+                // Check if Fiverr might be open/in recents
+                val fiverrPackage = "com.fiverr.fiverr"
+                val isFiverrInFront = isAppInForeground(this, fiverrPackage)
+                
+                if (isFiverrInFront) {
+                    Log.d("nvm", "Fiverr is in foreground - waking screen to clear from recents")
+                    isPerformingAction = true
+                    
+                    // Set low brightness and wake screen
+                    setLowBrightness()
+                    wakeScreen()
+                    
+                    // Wait for screen to wake, then clear from recents
+                    handler.postDelayed({
+                        val accessibilityService = FiverrAccessibilityService.getInstance()
+                        if (accessibilityService != null) {
+                            accessibilityService.clearFiverrFromRecents { success ->
+                                if (success) {
+                                    Log.d("nvm", "✅ Fiverr cleared from recents (no internet)")
+                                } else {
+                                    Log.w("nvm", "Failed to clear Fiverr from recents")
+                                }
+                                
+                                // Turn screen off and restore brightness
+                                handler.postDelayed({
+                                    turnScreenOff()
+                                    handler.postDelayed({
+                                        restoreBrightness()
+                                        isPerformingAction = false
+                                        // Schedule next action
+                                        if (!isScreenOn) {
+                                            scheduleNextAction()
+                                        }
+                                    }, 500)
+                                }, 500)
+                            }
+                        } else {
+                            Log.w("nvm", "Accessibility service not available")
+                            turnScreenOff()
+                            restoreBrightness()
+                            isPerformingAction = false
+                            if (!isScreenOn) {
+                                scheduleNextAction()
+                            }
+                        }
+                    }, 1000)
+                } else {
+                    // Fiverr not in foreground, just schedule next action
+                    Log.d("nvm", "Fiverr not in foreground, scheduling next action")
+                    if (!isScreenOn) {
+                        scheduleNextAction()
+                    }
                 }
                 return@checkInternetConnectivity
             }
