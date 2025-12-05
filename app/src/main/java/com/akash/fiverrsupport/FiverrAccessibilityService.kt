@@ -146,12 +146,14 @@ class FiverrAccessibilityService : AccessibilityService() {
         val screenHeight = displayMetrics.heightPixels
         
         // In MIUI 2-column grid, the last opened app (Fiverr) is in the LEFT column
-        // We only need to swipe LEFT on the left column to dismiss it
-        val leftColumnX = screenWidth * 0.25f
+        // Start from center of left column (25% of width) and swipe LEFT
+        // End position must be > 0 to avoid "Path bounds must not be negative" error
+        val startX = screenWidth * 0.35f  // Start a bit more to the right
+        val endX = 10f  // End near left edge (but not negative)
         val centerY = screenHeight * 0.5f
         
         // Swipe LEFT to dismiss the app in left column (Fiverr)
-        performHorizontalSwipe(leftColumnX, centerY, -screenWidth * 0.4f) { swipeSuccess ->
+        performHorizontalSwipe(startX, centerY, endX, centerY) { swipeSuccess ->
             if (swipeSuccess) {
                 Log.d("nvm", "✅ Left column swipe completed - Fiverr dismissed")
             } else {
@@ -168,19 +170,26 @@ class FiverrAccessibilityService : AccessibilityService() {
     }
     
     /**
-     * Perform a horizontal swipe gesture.
+     * Perform a swipe gesture from start to end coordinates.
      * @param startX Starting X position
      * @param startY Starting Y position  
-     * @param deltaX Distance to swipe (negative = left, positive = right)
+     * @param endX Ending X position (must be >= 0)
+     * @param endY Ending Y position (must be >= 0)
      */
-    private fun performHorizontalSwipe(startX: Float, startY: Float, deltaX: Float, callback: (Boolean) -> Unit) {
+    private fun performHorizontalSwipe(startX: Float, startY: Float, endX: Float, endY: Float, callback: (Boolean) -> Unit) {
         try {
+            // Ensure all coordinates are positive
+            val safeStartX = maxOf(10f, startX)
+            val safeStartY = maxOf(10f, startY)
+            val safeEndX = maxOf(10f, endX)
+            val safeEndY = maxOf(10f, endY)
+            
             val path = Path()
-            path.moveTo(startX, startY)
-            path.lineTo(startX + deltaX, startY)
+            path.moveTo(safeStartX, safeStartY)
+            path.lineTo(safeEndX, safeEndY)
             
             val gestureBuilder = GestureDescription.Builder()
-            val gestureStroke = GestureDescription.StrokeDescription(path, 0, 200) // 200ms duration
+            val gestureStroke = GestureDescription.StrokeDescription(path, 0, 250) // 250ms duration for smoother swipe
             gestureBuilder.addStroke(gestureStroke)
             
             val result = dispatchGesture(

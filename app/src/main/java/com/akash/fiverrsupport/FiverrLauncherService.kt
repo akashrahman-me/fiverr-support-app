@@ -89,17 +89,17 @@ class FiverrLauncherService : Service() {
                     if (!isPerformingAction) {
                         cancelScheduledAction()
                         Log.d("nvm", "Cancelled pending action - user is active")
-                    }
-                    
-                    // Auto-hide Fiverr if it's in foreground when user unlocks
-                    // This ensures user doesn't notice the automation was running
-                    val fiverrPackage = "com.fiverr.fiverr"
-                    if (isAppInForeground(this@FiverrLauncherService, fiverrPackage)) {
-                        Log.d("nvm", "🏠 Fiverr is open - pressing HOME to hide it from user")
-                        val accessibilityService = FiverrAccessibilityService.getInstance()
-                        accessibilityService?.performGlobalAction(
-                            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
-                        )
+                        
+                        // Auto-hide Fiverr if it's in foreground when USER unlocks (not automation)
+                        // This ensures user doesn't notice the automation was running
+                        val fiverrPackage = "com.fiverr.fiverr"
+                        if (isAppInForeground(this@FiverrLauncherService, fiverrPackage)) {
+                            Log.d("nvm", "🏠 Fiverr is open - pressing HOME to hide it from user")
+                            val accessibilityService = FiverrAccessibilityService.getInstance()
+                            accessibilityService?.performGlobalAction(
+                                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
+                            )
+                        }
                     }
                 }
             }
