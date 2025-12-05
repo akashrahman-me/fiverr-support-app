@@ -95,53 +95,54 @@ class FiverrLauncherService : Service() {
         }
     }
 
-    // The main action runnable
-    private val actionRunnable = object : Runnable {
-        override fun run() {
-            if (!isRunning) {
-                Log.d("nvm", "Service not running, skipping action")
-                return
-            }
+    /**
+     * Executes the scheduled Fiverr action.
+     * Called by AlarmReceiver when the alarm triggers.
+     */
+    private fun executeScheduledAction() {
+        if (!isRunning) {
+            Log.d("nvm", "Service not running, skipping action")
+            return
+        }
 
-            Log.d("nvm", "⏰ Timer expired - checking internet before executing")
-            
-            // Check internet connectivity first
-            checkInternetConnectivity { hasInternet ->
-                if (!hasInternet) {
-                    Log.d("nvm", "📵 No internet - skipping action, will retry at next interval")
-                    // Schedule next action without waking screen
-                    if (!isScreenOn) {
-                        scheduleNextAction()
-                    }
-                    return@checkInternetConnectivity
+        Log.d("nvm", "⏰ Timer expired - checking internet before executing")
+        
+        // Check internet connectivity first
+        checkInternetConnectivity { hasInternet ->
+            if (!hasInternet) {
+                Log.d("nvm", "📵 No internet - skipping action, will retry at next interval")
+                // Schedule next action without waking screen
+                if (!isScreenOn) {
+                    scheduleNextAction()
                 }
-                
-                Log.d("nvm", "📶 Internet available - executing action sequence")
-                isPerformingAction = true
-
-                // Step 1: Set low brightness BEFORE waking screen (screen is still off)
-                setLowBrightness()
-
-                // Step 2: Wake the screen (will wake with low brightness already set)
-                wakeScreen()
-
-                // Step 3: Wait for screen to fully wake, then do Fiverr action
-                handler.postDelayed({
-                    performFiverrAction {
-                        // Step 4: After action completes, turn screen off first, then restore brightness
-                        handler.postDelayed({
-                            turnScreenOff()
-                            
-                            // Restore brightness AFTER screen is off (user won't see the change)
-                            handler.postDelayed({
-                                restoreBrightness()
-                                isPerformingAction = false
-                                // Screen off receiver will schedule next action
-                            }, 500)
-                        }, 2000)
-                    }
-                }, 1000)
+                return@checkInternetConnectivity
             }
+            
+            Log.d("nvm", "📶 Internet available - executing action sequence")
+            isPerformingAction = true
+
+            // Step 1: Set low brightness BEFORE waking screen (screen is still off)
+            setLowBrightness()
+
+            // Step 2: Wake the screen (will wake with low brightness already set)
+            wakeScreen()
+
+            // Step 3: Wait for screen to fully wake, then do Fiverr action
+            handler.postDelayed({
+                performFiverrAction {
+                    // Step 4: After action completes, turn screen off first, then restore brightness
+                    handler.postDelayed({
+                        turnScreenOff()
+                        
+                        // Restore brightness AFTER screen is off (user won't see the change)
+                        handler.postDelayed({
+                            restoreBrightness()
+                            isPerformingAction = false
+                            // Screen off receiver will schedule next action
+                        }, 500)
+                    }, 2000)
+                }
+            }, 1000)
         }
     }
 
@@ -238,6 +239,15 @@ class FiverrLauncherService : Service() {
                 if (!isScreenOn && isRunning) {
                     cancelScheduledAction()
                     scheduleNextAction()
+                }
+            }
+            ACTION_EXECUTE_SCHEDULED -> {
+                // Triggered by AlarmReceiver - execute the scheduled action
+                if (isRunning && !isScreenOn) {
+                    Log.d("nvm", "⏰ Executing scheduled action from AlarmManager")
+                    executeScheduledAction()
+                } else {
+                    Log.d("nvm", "Skipping action - service not running or screen is on")
                 }
             }
         }
@@ -361,19 +371,44 @@ class FiverrLauncherService : Service() {
         }
     }
 
+    @SuppressLint("ScheduleExactAlarm")
     private fun scheduleNextAction() {
         if (!isRunning) return
 
         cancelScheduledAction()
         nextActionTime = System.currentTimeMillis() + launchInterval
-        handler.postDelayed(actionRunnable, launchInterval)
-        Log.d("nvm", "📅 Next action scheduled in ${launchInterval / 1000}s")
+        
+        val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+        val intent = Intent(this, AlarmReceiver::class.java).apply {
+            action = AlarmReceiver.ACTION_EXECUTE_FIVERR_ACTION
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            this, AlarmReceiver.ALARM_REQUEST_CODE, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        // Use setExactAndAllowWhileIdle for Doze mode resistance on Android 13+
+        alarmManager.setExactAndAllowWhileIdle(
+            AlarmManager.RTC_WAKEUP,
+            nextActionTime,
+            pendingIntent
+        )
+        
+        Log.d("nvm", "📅 Next action scheduled via AlarmManager in ${launchInterval / 1000}s")
     }
 
     private fun cancelScheduledAction() {
-        handler.removeCallbacks(actionRunnable)
+        val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+        val intent = Intent(this, AlarmReceiver::class.java).apply {
+            action = AlarmReceiver.ACTION_EXECUTE_FIVERR_ACTION
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            this, AlarmReceiver.ALARM_REQUEST_CODE, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        alarmManager.cancel(pendingIntent)
         nextActionTime = 0
-        Log.d("nvm", "🚫 Cancelled scheduled action")
+        Log.d("nvm", "🚫 Cancelled scheduled AlarmManager action")
     }
 
     /**
@@ -623,6 +658,7 @@ class FiverrLauncherService : Service() {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_UPDATE_INTERVAL = "ACTION_UPDATE_INTERVAL"
+        const val ACTION_EXECUTE_SCHEDULED = "ACTION_EXECUTE_SCHEDULED"
         const val EXTRA_INTERVAL = "EXTRA_INTERVAL"
     }
 }

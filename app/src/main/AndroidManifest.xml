@@ -65,6 +65,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Broadcast Receiver for AlarmManager scheduled actions -->
+        <receiver
+            android:name=".AlarmReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.akash.fiverrsupport.ACTION_EXECUTE_FIVERR_ACTION" />
+            </intent-filter>
+        </receiver>
+
         <!-- Accessibility Service for performing gestures in Fiverr app -->
         <service
             android:name=".FiverrAccessibilityService"
