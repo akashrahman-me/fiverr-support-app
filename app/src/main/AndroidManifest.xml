@@ -49,8 +49,10 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Fiverr app launcher with screen wake-lock" />
+                android:value="Fiverr app launcher with screen wake-lock and auto-lock on inactivity" />
         </service>
+
+
 
         <!-- Broadcast Receiver for automatic service restart -->
         <receiver

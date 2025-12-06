@@ -37,6 +37,38 @@ class FiverrAccessibilityService : AccessibilityService() {
                 ForegroundAppHolder.currentPackage = packageName
             }
         }
+        
+        // Detect user touch/interaction events for inactivity monitoring
+        // OPTIMIZATION: Check if monitoring is actually active before doing anything.
+        // This avoids performance overhead of processing high-volume events (like scroll)
+        // when we don't need them. FiverrLauncherService.isMonitoringActive is a static volatile flag.
+        if (FiverrLauncherService.isMonitoringActive) {
+            when (event?.eventType) {
+                AccessibilityEvent.TYPE_VIEW_CLICKED,
+                AccessibilityEvent.TYPE_VIEW_LONG_CLICKED,
+                AccessibilityEvent.TYPE_VIEW_SCROLLED,
+                AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
+                AccessibilityEvent.TYPE_GESTURE_DETECTION_START -> {
+                    // User is actively interacting - notify FiverrLauncherService
+                    notifyUserActivity()
+                }
+            }
+        }
+    }
+    
+    /**
+     * Notify FiverrLauncherService that user activity was detected.
+     * This stops the inactivity monitoring.
+     */
+    private fun notifyUserActivity() {
+        try {
+            val intent = android.content.Intent(this, FiverrLauncherService::class.java).apply {
+                action = FiverrLauncherService.ACTION_USER_ACTIVITY
+            }
+            startService(intent)
+        } catch (e: Exception) {
+            // Service might not be running - ignore
+        }
     }
 
     override fun onInterrupt() {

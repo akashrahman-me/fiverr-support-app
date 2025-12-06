@@ -63,6 +63,21 @@ class FiverrLauncherService : Service() {
     private var statusOverlay: StatusOverlayView? = null
     private var nextActionTime = 0L // When next action will happen
 
+    // --- Inactivity Feature Variables ---
+    private var isInactivityEnabled = false
+    private var inactivityTimeout = 10000L // Default 10 seconds
+    private var isInactivityMonitoring = false
+    private var wasUserUnlock = false // Track if unlock was by user
+
+    private val inactivityRunnable = Runnable {
+        if (isRunning && isInactivityMonitoring && wasUserUnlock) {
+            Log.d("nvm", "⏰ Inactivity timeout reached - turning off screen")
+            turnScreenOff()
+            stopInactivityMonitoring()
+            wasUserUnlock = false
+        }
+    }
+
     // Screen state receiver
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -86,12 +101,13 @@ class FiverrLauncherService : Service() {
                 }
                 Intent.ACTION_USER_PRESENT -> {
                     Log.d("nvm", "🔓 User unlocked device")
+
+                    // Handle Automation Logic
                     if (!isPerformingAction) {
                         cancelScheduledAction()
                         Log.d("nvm", "Cancelled pending action - user is active")
                         
                         // Auto-hide Fiverr if it's in foreground when USER unlocks (not automation)
-                        // This ensures user doesn't notice the automation was running
                         val fiverrPackage = "com.fiverr.fiverr"
                         if (isAppInForeground(this@FiverrLauncherService, fiverrPackage)) {
                             Log.d("nvm", "🏠 Fiverr is open - pressing HOME to hide it from user")
@@ -100,6 +116,17 @@ class FiverrLauncherService : Service() {
                                 android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
                             )
                         }
+                    }
+
+                    // Handle Inactivity Logic
+                    // Only start monitoring if feature enabled AND not performing automation
+                    if (isInactivityEnabled && !isPerformingAction) {
+                        Log.d("nvm", "🔓 [Inactivity] User manually unlocked - starting monitoring")
+                        wasUserUnlock = true
+                        startInactivityMonitoring()
+                    } else if (isInactivityEnabled) {
+                        Log.d("nvm", "🤖 [Inactivity] Automation unlock detected - NOT monitoring")
+                        wasUserUnlock = false
                     }
                 }
             }
@@ -181,7 +208,7 @@ class FiverrLauncherService : Service() {
             
             Log.d("nvm", "📶 Internet available - executing action sequence")
             isPerformingAction = true
-
+            
             // Step 1: Set low brightness BEFORE waking screen (screen is still off)
             setLowBrightness()
 
@@ -234,19 +261,26 @@ class FiverrLauncherService : Service() {
         if (intent == null) {
             Log.d("nvm", "Service restarted by Android - restoring state")
             val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
-            val wasEnabled = prefs.getBoolean("service_enabled", false)
+            val wasServiceEnabled = prefs.getBoolean("service_enabled", false)
+            val wasInactivityEnabled = prefs.getBoolean("inactivity_service_enabled", false)
             launchInterval = prefs.getLong("service_interval", 30000L)
+            inactivityTimeout = prefs.getLong("inactivity_timeout", 10000L)
 
-            if (wasEnabled) {
+            if (wasServiceEnabled || wasInactivityEnabled) {
+                // Determine if we should start
+                isInactivityEnabled = wasInactivityEnabled
+                
                 startForegroundServiceInternal()
                 isRunning = true
-                createStatusOverlay()
-
-                if (!isScreenOn) {
-                    screenOffTime = System.currentTimeMillis()
-                    scheduleNextAction()
+                
+                if (wasServiceEnabled) {
+                    createStatusOverlay()
+                    if (!isScreenOn) {
+                        screenOffTime = System.currentTimeMillis()
+                        scheduleNextAction()
+                    }
                 }
-                Log.d("nvm", "Service restored with interval: ${launchInterval / 1000}s")
+                Log.d("nvm", "Service restored. Auto: $wasServiceEnabled, Inactivity: $wasInactivityEnabled")
             } else {
                 stopSelf()
             }
@@ -309,6 +343,67 @@ class FiverrLauncherService : Service() {
                     executeScheduledAction()
                 } else {
                     Log.d("nvm", "Skipping action - service not running or screen is on")
+                }
+            }
+            
+            // --- Inactivity Feature Actions ---
+            ACTION_START_INACTIVITY -> {
+                isInactivityEnabled = true
+                inactivityTimeout = intent.getLongExtra(EXTRA_TIMEOUT, 10000L)
+                
+                val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+                prefs.edit()
+                    .putBoolean("inactivity_service_enabled", true)
+                    .putLong("inactivity_timeout", inactivityTimeout)
+                    .commit() // Use commit for immediate write
+                    
+                if (!isRunning) {
+                    startForegroundServiceInternal()
+                    isRunning = true
+                }
+                
+                Log.d("nvm", "✅ Inactivity feature enabled with timeout: ${inactivityTimeout / 1000}s")
+            }
+            ACTION_STOP_INACTIVITY -> {
+                isInactivityEnabled = false
+                stopInactivityMonitoring()
+                
+                val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+                prefs.edit()
+                    .putBoolean("inactivity_service_enabled", false)
+                    .commit()
+                    
+                Log.d("nvm", "🛑 Inactivity feature disabled")
+                
+                // If automation is also disabled, stop the whole service
+                val isAutomationEnabled = prefs.getBoolean("service_enabled", false)
+                if (!isAutomationEnabled) {
+                    stopForegroundServiceInternal()
+                    isRunning = false
+                }
+            }
+            ACTION_UPDATE_TIMEOUT -> {
+                inactivityTimeout = intent.getLongExtra(EXTRA_TIMEOUT, 10000L)
+                
+                val prefs = getSharedPreferences("FiverrSupportPrefs", MODE_PRIVATE)
+                prefs.edit()
+                    .putLong("inactivity_timeout", inactivityTimeout)
+                    .apply()
+                    
+                Log.d("nvm", "⏱️ Inactivity timeout updated to: ${inactivityTimeout / 1000}s")
+                
+                // Restart monitoring if currently monitoring
+                if (isInactivityMonitoring) {
+                    startInactivityMonitoring()
+                }
+            }
+            ACTION_USER_ACTIVITY -> {
+                // Called when AccessibilityService detects interaction
+                // Optimization: Check isMonitoringActive inside AccessibilityService first
+                if (isRunning && isInactivityMonitoring && wasUserUnlock) {
+                    Log.d("nvm", "👆 [Inactivity] User activity detected within timeout - stopping monitoring")
+                    stopInactivityMonitoring()
+                    wasUserUnlock = false
                 }
             }
         }
@@ -669,6 +764,24 @@ class FiverrLauncherService : Service() {
     }
 
     @SuppressLint("ScheduleExactAlarm")
+    private fun startInactivityMonitoring() {
+        if (!isRunning) return
+        
+        isInactivityMonitoring = true
+        isMonitoringActive = true // Update static flag for AccessibilityService
+        
+        handler.removeCallbacks(inactivityRunnable)
+        handler.postDelayed(inactivityRunnable, inactivityTimeout)
+        
+        Log.d("nvm", "🔍 [Inactivity] Monitoring started - will turn off screen in ${inactivityTimeout / 1000}s if no activity")
+    }
+
+    private fun stopInactivityMonitoring() {
+        handler.removeCallbacks(inactivityRunnable)
+        isInactivityMonitoring = false
+        isMonitoringActive = false // Update static flag
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
@@ -721,6 +834,18 @@ class FiverrLauncherService : Service() {
         const val ACTION_UPDATE_INTERVAL = "ACTION_UPDATE_INTERVAL"
         const val ACTION_EXECUTE_SCHEDULED = "ACTION_EXECUTE_SCHEDULED"
         const val EXTRA_INTERVAL = "EXTRA_INTERVAL"
+        
+        // Inactivity Actions
+        const val ACTION_START_INACTIVITY = "ACTION_START_INACTIVITY"
+        const val ACTION_STOP_INACTIVITY = "ACTION_STOP_INACTIVITY"
+        const val ACTION_UPDATE_TIMEOUT = "ACTION_UPDATE_TIMEOUT"
+        const val ACTION_USER_ACTIVITY = "ACTION_USER_ACTIVITY"
+        const val EXTRA_TIMEOUT = "EXTRA_TIMEOUT"
+        
+        // Static flag for AccessibilityService optimization
+        @Volatile
+        var isMonitoringActive = false
+            private set
     }
 }
 

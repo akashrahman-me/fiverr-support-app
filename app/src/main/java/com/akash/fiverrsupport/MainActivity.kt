@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -130,13 +131,27 @@ fun Root() {
     // Interval options in seconds
     val intervalOptions = listOf(10, 30, 60, 120, 180, 300, 600, 1800)
 
+    val isServiceRunning = isServiceRunning(context, FiverrLauncherService::class.java)
+    val isAutomationEnabledPref = sharedPrefs.getBoolean("service_enabled", false)
+    
     var isEnabled by remember {
-        mutableStateOf(isServiceRunning(context, FiverrLauncherService::class.java))
+        mutableStateOf(isServiceRunning && isAutomationEnabledPref)
     }
 
     val savedIntervalSeconds = (sharedPrefs.getLong("service_interval", 30000L) / 1000).toInt()
     val savedIntervalIndex = intervalOptions.indexOf(savedIntervalSeconds).let { if (it >= 0) it else 1 }
     var selectedIntervalIndex by remember { mutableStateOf(savedIntervalIndex) }
+
+    // Inactivity feature state
+    val inactivityTimeoutOptions = listOf(5, 10, 15, 20, 30, 45, 60, 90, 120) // seconds
+    val isInactivityEnabledPref = sharedPrefs.getBoolean("inactivity_service_enabled", false)
+    
+    var isInactivityEnabled by remember {
+        mutableStateOf(isServiceRunning && isInactivityEnabledPref)
+    }
+    val savedInactivitySeconds = (sharedPrefs.getLong("inactivity_timeout", 10000L) / 1000).toInt()
+    val savedInactivityIndex = inactivityTimeoutOptions.indexOf(savedInactivitySeconds).let { if (it >= 0) it else 1 }
+    var selectedInactivityIndex by remember { mutableStateOf(savedInactivityIndex) }
 
     var isNotificationEnabled by remember {
         mutableStateOf(
@@ -162,7 +177,13 @@ fun Root() {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                isEnabled = isServiceRunning(context, FiverrLauncherService::class.java)
+                val serviceRunning = isServiceRunning(context, FiverrLauncherService::class.java)
+                val automationPref = sharedPrefs.getBoolean("service_enabled", false)
+                val inactivityPref = sharedPrefs.getBoolean("inactivity_service_enabled", false)
+                
+                isEnabled = serviceRunning && automationPref
+                isInactivityEnabled = serviceRunning && inactivityPref
+                
                 isNotificationEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
                 } else true
@@ -177,8 +198,14 @@ fun Root() {
     }
 
     LaunchedEffect(Unit) {
-        isEnabled = isServiceRunning(context, FiverrLauncherService::class.java)
-        Log.d("nvm", "Initial service check: isEnabled = $isEnabled")
+        val serviceRunning = isServiceRunning(context, FiverrLauncherService::class.java)
+        val automationPref = sharedPrefs.getBoolean("service_enabled", false)
+        val inactivityPref = sharedPrefs.getBoolean("inactivity_service_enabled", false)
+        
+        isEnabled = serviceRunning && automationPref
+        isInactivityEnabled = serviceRunning && inactivityPref
+        
+        Log.d("nvm", "Initial service check: isEnabled = $isEnabled, isInactivityEnabled = $isInactivityEnabled")
     }
 
     fun toggleService(enabled: Boolean) {
@@ -203,6 +230,36 @@ fun Root() {
             val serviceIntent = Intent(context, FiverrLauncherService::class.java)
             serviceIntent.action = FiverrLauncherService.ACTION_UPDATE_INTERVAL
             serviceIntent.putExtra(FiverrLauncherService.EXTRA_INTERVAL, (intervalSeconds * 1000).toLong())
+            context.startService(serviceIntent)
+        }
+    }
+
+    fun toggleInactivityService(enabled: Boolean) {
+        val serviceIntent = Intent(context, FiverrLauncherService::class.java)
+        serviceIntent.action = if (enabled) FiverrLauncherService.ACTION_START_INACTIVITY else FiverrLauncherService.ACTION_STOP_INACTIVITY
+
+        if (enabled) {
+            val timeoutSeconds = inactivityTimeoutOptions[selectedInactivityIndex]
+            serviceIntent.putExtra(FiverrLauncherService.EXTRA_TIMEOUT, (timeoutSeconds * 1000).toLong())
+        }
+
+        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(serviceIntent)
+        } else if (enabled) {
+            context.startService(serviceIntent)
+        } else {
+            // If stopping, just startService to deliver intent (if service is running)
+            // If service is NOT running, this will start it momentarily then it might stop itself if both features disabled
+            context.startService(serviceIntent)
+        }
+    }
+
+    fun updateInactivityTimeout(timeoutSeconds: Int) {
+        sharedPrefs.edit { putLong("inactivity_timeout", (timeoutSeconds * 1000).toLong()) }
+        if (isInactivityEnabled) {
+            val serviceIntent = Intent(context, FiverrLauncherService::class.java)
+            serviceIntent.action = FiverrLauncherService.ACTION_UPDATE_TIMEOUT
+            serviceIntent.putExtra(FiverrLauncherService.EXTRA_TIMEOUT, (timeoutSeconds * 1000).toLong())
             context.startService(serviceIntent)
         }
     }
@@ -292,6 +349,57 @@ fun Root() {
                     updateInterval(seconds)
                 },
                 optionsText = "Available: 10s, 30s, 1m, 2m, 3m, 5m, 10m, 30m"
+            )
+
+            Spacer(modifier = Modifier.padding(16.dp))
+
+            // Inactivity Auto Screen-Off Section
+            SectionHeader(
+                icon = Icons.Default.Lock,
+                title = "Auto Screen-Off",
+                subtitle = "Lock on inactivity after manual unlock"
+            )
+
+            Spacer(modifier = Modifier.padding(12.dp))
+
+            PermissionToggleItem(
+                icon = Icons.Default.Lock,
+                title = "Enable Auto Screen-Off",
+                isEnabled = isInactivityEnabled,
+                enabledText = "Turns off screen when idle after manual unlock",
+                disabledText = "Feature is disabled",
+                onToggle = {
+                    isInactivityEnabled = !isInactivityEnabled
+                    toggleInactivityService(isInactivityEnabled)
+                }
+            )
+
+            Spacer(modifier = Modifier.padding(8.dp))
+
+            val inactivitySeconds = inactivityTimeoutOptions[selectedInactivityIndex]
+            val inactivityDisplay = when {
+                inactivitySeconds >= 60 -> "${inactivitySeconds / 60}m ${inactivitySeconds % 60}s".let {
+                    if (inactivitySeconds % 60 == 0) "${inactivitySeconds / 60}m" else it
+                }
+                else -> "${inactivitySeconds}s"
+            }
+
+            ConfigSlider(
+                icon = Icons.Default.Lock,
+                title = "Inactivity Timeout",
+                currentValue = inactivityDisplay,
+                description = "Screen turns off after $inactivityDisplay of no interaction",
+                sliderValue = selectedInactivityIndex.toFloat(),
+                valueRange = 0f..(inactivityTimeoutOptions.size - 1).toFloat(),
+                steps = inactivityTimeoutOptions.size - 2,
+                onValueChange = {
+                    selectedInactivityIndex = it.toInt()
+                },
+                onValueChangeFinished = {
+                    val seconds = inactivityTimeoutOptions[selectedInactivityIndex]
+                    updateInactivityTimeout(seconds)
+                },
+                optionsText = "Available: 5s, 10s, 15s, 20s, 30s, 45s, 1m, 1m30s, 2m"
             )
 
             Spacer(modifier = Modifier.padding(16.dp))
